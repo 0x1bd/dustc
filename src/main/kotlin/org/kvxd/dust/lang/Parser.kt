@@ -1,0 +1,270 @@
+package org.kvxd.dust.lang
+
+internal class Parser(
+    private val reporter: DiagnosticReporter,
+    source: SourceFile,
+) {
+    private val tokens = Lexer(reporter, source).tokenize()
+    private var position = 0
+
+    fun parse(): List<ModuleSyntax> = buildList {
+        while (!check(TokenType.EOF)) {
+            try {
+                add(parseModule())
+            } catch (_: ParseError) {
+                synchronizeModule()
+            }
+        }
+    }
+
+    private fun parseModule(): ModuleSyntax {
+        val location = consume(TokenType.MODULE, "expected a module declaration")
+        val name = consumeIdentifier("expected a module name")
+        consume(TokenType.LPAREN, "expected '(' after module name")
+        val ports = arrayListOf<PortSyntax>()
+        if (!check(TokenType.RPAREN)) {
+            do {
+                if (check(TokenType.RPAREN)) break
+                ports += parsePortDeclaration()
+            } while (match(TokenType.COMMA))
+        }
+        consume(TokenType.RPAREN, "expected ')' after module ports")
+        return ModuleSyntax(name, ports, parseBlock(), location)
+    }
+
+    private fun parsePortDeclaration(): List<PortSyntax> {
+        val direction = when {
+            match(TokenType.INPUT) -> PortDirection.INPUT
+            match(TokenType.OUTPUT) -> PortDirection.OUTPUT
+            else -> error("expected 'input' or 'output'")
+        }
+        val first = consume(TokenType.ID, "expected a port or group name")
+        if (!match(TokenType.LBRACE)) {
+            return listOf(parsePort(direction, first, group = null))
+        }
+
+        val ports = arrayListOf<PortSyntax>()
+        if (check(TokenType.RBRACE)) error("I/O group '${first.value}' cannot be empty")
+        do {
+            if (check(TokenType.RBRACE)) break
+            ports += parsePort(direction, consume(TokenType.ID, "expected a port name"), first.value)
+        } while (match(TokenType.COMMA))
+        consume(TokenType.RBRACE, "expected '}' after I/O group '${first.value}'")
+        return ports
+    }
+
+    private fun parsePort(direction: PortDirection, nameToken: Token, group: String?): PortSyntax {
+        consume(TokenType.COLON, "expected ':' after port name")
+        val type = current()
+        val typeName = consumeIdentifier("expected 'bit' or 'bits<width>'")
+        val width = when (typeName) {
+            "bit" -> 1
+            "bits" -> {
+                consume(TokenType.LESS, "expected '<' before bus width")
+                val widthToken = consume(TokenType.INT, "expected a bus width")
+                val value = parseInteger(widthToken)
+                consume(TokenType.GREATER, "expected '>' after bus width")
+                if (value !in 1..ULong.SIZE_BITS) {
+                    reporter.error("bus width must be between 1 and ${ULong.SIZE_BITS}", widthToken)
+                    1
+                } else {
+                    value
+                }
+            }
+            else -> {
+                reporter.error("unknown signal type '$typeName'", type)
+                1
+            }
+        }
+        return PortSyntax(direction, nameToken.value, width, group, nameToken)
+    }
+
+    private fun parseBlock(): BlockSyntax {
+        val location = consume(TokenType.LBRACE, "expected '{'")
+        val statements = arrayListOf<StatementSyntax>()
+        while (!check(TokenType.RBRACE) && !check(TokenType.EOF)) {
+            try {
+                statements += parseStatement()
+            } catch (_: ParseError) {
+                synchronizeStatement()
+            }
+        }
+        consume(TokenType.RBRACE, "expected '}'")
+        return BlockSyntax(statements, location)
+    }
+
+    private fun parseStatement(): StatementSyntax = when (current().type) {
+        TokenType.LET -> parseVariable()
+        TokenType.FOR -> parseFor()
+        TokenType.LBRACE -> parseBlock()
+        else -> parseExpressionStatement()
+    }
+
+    private fun parseVariable(): VariableSyntax {
+        val location = advance()
+        val mutable = match(TokenType.MUT)
+        val name = consumeIdentifier("expected a signal name")
+        consume(TokenType.EQ, "a local signal needs an initializer")
+        return VariableSyntax(name, mutable, parseExpression(), location)
+    }
+
+    private fun parseFor(): ForSyntax {
+        val location = advance()
+        val name = consumeIdentifier("expected a loop index")
+        consume(TokenType.IN, "expected 'in'")
+        val first = parseExpression()
+        consume(TokenType.DOTDOT, "expected '..' in loop range")
+        val inclusive = match(TokenType.EQ)
+        val end = parseExpression()
+        return ForSyntax(name, first, end, inclusive, parseBlock(), location)
+    }
+
+    private fun parseExpressionStatement(): StatementSyntax {
+        val expression = parseExpression()
+        if (match(TokenType.EQ)) return AssignmentSyntax(expression, parseExpression(), previous())
+        return expression
+    }
+
+    private fun parseExpression(): ExpressionSyntax = parseBinary(1)
+
+    private fun parseBinary(minimumPrecedence: Int): ExpressionSyntax {
+        var left = parseUnary()
+        while (true) {
+            val operator = current().type
+            val precedence = precedence(operator)
+            if (precedence < minimumPrecedence || precedence == 0) break
+            val location = advance()
+            val right = parseBinary(precedence + 1)
+            left = BinarySyntax(left, operator, right, location)
+        }
+        return left
+    }
+
+    private fun precedence(type: TokenType): Int = when (type) {
+        TokenType.OR, TokenType.PIPE -> 1
+        TokenType.CARET -> 2
+        TokenType.AND, TokenType.AMP -> 3
+        else -> 0
+    }
+
+    private fun parseUnary(): ExpressionSyntax {
+        if (check(TokenType.TILDE) || check(TokenType.BANG)) {
+            val location = advance()
+            return UnarySyntax(location.type, parseUnary(), location)
+        }
+        return parsePostfix(parsePrimary())
+    }
+
+    private fun parsePostfix(start: ExpressionSyntax): ExpressionSyntax {
+        var expression = start
+        while (true) {
+            expression = when {
+                match(TokenType.DOT) -> {
+                    val location = previous()
+                    AccessSyntax(expression, consumeIdentifier("expected an output name"), location)
+                }
+                match(TokenType.LBRACKET) -> {
+                    val location = previous()
+                    val index = parseExpression()
+                    consume(TokenType.RBRACKET, "expected ']'")
+                    IndexSyntax(expression, index, location)
+                }
+                else -> return expression
+            }
+        }
+    }
+
+    private fun parsePrimary(): ExpressionSyntax {
+        val token = current()
+        return when (token.type) {
+            TokenType.INT -> {
+                advance()
+                IntegerSyntax(parseInteger(token), token)
+            }
+            TokenType.ID -> {
+                advance()
+                if (check(TokenType.LPAREN)) CallSyntax(token.value, parseArguments(), token)
+                else NameSyntax(token.value, token)
+            }
+            TokenType.LPAREN -> {
+                advance()
+                val expression = parseExpression()
+                consume(TokenType.RPAREN, "expected ')'")
+                expression
+            }
+            else -> error("expected a signal or gate expression")
+        }
+    }
+
+    private fun parseArguments(): List<ExpressionSyntax> {
+        consume(TokenType.LPAREN, "expected '('")
+        val arguments = arrayListOf<ExpressionSyntax>()
+        if (!check(TokenType.RPAREN)) {
+            do {
+                if (check(TokenType.RPAREN)) break
+                arguments += parseExpression()
+            } while (match(TokenType.COMMA))
+        }
+        consume(TokenType.RPAREN, "expected ')' after arguments")
+        return arguments
+    }
+
+    private fun parseInteger(token: Token): Int {
+        val value = when {
+            token.value.startsWith("0x", ignoreCase = true) -> token.value.drop(2).toIntOrNull(16)
+            token.value.startsWith("0b", ignoreCase = true) -> token.value.drop(2).toIntOrNull(2)
+            else -> token.value.toIntOrNull()
+        }
+        if (value == null) reporter.error("integer '${token.value}' does not fit in 32 bits", token)
+        return value ?: 0
+    }
+
+    private fun synchronizeModule() {
+        while (!check(TokenType.EOF) && !check(TokenType.MODULE)) advance()
+    }
+
+    private fun synchronizeStatement() {
+        var depth = 0
+        while (!check(TokenType.EOF)) {
+            when (current().type) {
+                TokenType.LBRACE -> depth++
+                TokenType.RBRACE -> {
+                    if (depth == 0) return
+                    depth--
+                }
+                TokenType.LET, TokenType.FOR -> if (depth == 0) return
+                else -> if (depth == 0 && startsLine()) return
+            }
+            advance()
+        }
+    }
+
+    private fun startsLine(): Boolean = position > 0 && current().line > previous().line
+    private fun current(): Token = tokens[position]
+    private fun previous(): Token = tokens[if (position == 0) 0 else position - 1]
+    private fun check(type: TokenType): Boolean = current().type == type
+
+    private fun advance(): Token {
+        val token = current()
+        if (position < tokens.lastIndex) position++
+        return token
+    }
+
+    private fun match(type: TokenType): Boolean {
+        if (!check(type)) return false
+        advance()
+        return true
+    }
+
+    private fun consume(type: TokenType, message: String): Token =
+        if (check(type)) advance() else error(message)
+
+    private fun consumeIdentifier(message: String): String = consume(TokenType.ID, message).value
+
+    private fun error(message: String): Nothing {
+        reporter.error(message, current())
+        throw ParseError()
+    }
+
+    private class ParseError : RuntimeException()
+}

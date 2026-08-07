@@ -1,0 +1,14 @@
+module mux8(
+    input control {
+        select: bit,
+    },
+    input data {
+        low: bits<8>,
+        high: bits<8>,
+    },
+    output result {
+        value: bits<8>,
+    },
+) {
+    value = mux(select, low, high)
+}

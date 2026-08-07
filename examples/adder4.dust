@@ -1,0 +1,19 @@
+module adder4(
+    input operands {
+        a: bits<4>,
+        b: bits<4>,
+        cin: bit,
+    },
+    output result {
+        sum: bits<4>,
+        cout: bit,
+    },
+) {
+    let mut carry = cin
+    for i in 0..4 {
+        let p = a[i] ^ b[i]
+        sum[i] = p ^ carry
+        carry = (a[i] & b[i]) | (p & carry)
+    }
+    cout = carry
+}

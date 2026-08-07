@@ -1,0 +1,105 @@
+package org.kvxd.dust.technology
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import org.kvxd.dust.device.ComponentKind
+import org.kvxd.dust.netlist.Primitive
+import org.kvxd.dust.physical.PhysicalCompiler
+import org.kvxd.dust.netlist.booleanNetlist
+import org.kvxd.dust.sim.GateLevelSimulator
+
+class CellLibraryTest {
+    private val technology = MinecraftRedstone.technology
+
+    @Test
+    fun `combinational cells match their truth tables`() {
+        val cases = listOf<Triple<Primitive, List<String>, (List<Boolean>) -> Boolean>>(
+            Triple(Primitive.NOT, listOf("a")) { !it[0] },
+            Triple(Primitive.AND2, listOf("a", "b")) { it[0] && it[1] },
+            Triple(Primitive.OR2, listOf("a", "b")) { it[0] || it[1] },
+            Triple(Primitive.XOR2, listOf("a", "b")) { it[0] xor it[1] },
+        )
+        cases.forEach { (primitive, names, expected) ->
+            val netlist = booleanNetlist(primitive.name.lowercase()) {
+                val inputs = names.map { input(it) }
+                val out = when (primitive) {
+                    Primitive.NOT -> not(inputs[0])
+                    Primitive.AND2 -> and(inputs[0], inputs[1])
+                    Primitive.OR2 -> or(inputs[0], inputs[1])
+                    Primitive.XOR2 -> xor(inputs[0], inputs[1])
+                    Primitive.LATCH -> error("sequential")
+                }
+                output("y", out)
+            }
+            val design = PhysicalCompiler(technology).compile(netlist)
+            val simulator = GateLevelSimulator(design.matrix)
+            val bound = design.matrix.blockCount()
+            simulator.settle(bound)
+
+            repeat(1 shl names.size) { pattern ->
+                val values = names.indices.map { pattern and (1 shl it) != 0 }
+                names.forEachIndexed { index, name ->
+                    simulator.setInput(checkNotNull(design.inputs[name]), values[index])
+                }
+                simulator.advanceUntilIdle(bound)
+                assertEquals(
+                    expected(values),
+                    simulator.readOutput(checkNotNull(design.outputs["y"])),
+                    "$primitive with $values",
+                )
+            }
+            assertTrue(simulator.unsettled().isEmpty(), "$primitive left the world unsettled")
+        }
+    }
+
+    @Test
+    fun `latch follows data while open and retains it while held`() {
+        val netlist = booleanNetlist("latch") {
+            val data = input("data")
+            val hold = input("hold")
+            output("q", latch(data, hold))
+        }
+        val design = PhysicalCompiler(technology).compile(netlist)
+        val simulator = GateLevelSimulator(design.matrix)
+        val bound = design.matrix.blockCount()
+        simulator.settle(bound)
+
+        fun drive(data: Boolean, hold: Boolean): Boolean {
+            simulator.setInput(checkNotNull(design.inputs["data"]), data)
+            simulator.setInput(checkNotNull(design.inputs["hold"]), hold)
+            simulator.advanceUntilIdle(bound)
+            return simulator.readOutput(checkNotNull(design.outputs["q"]))
+        }
+
+        assertEquals(false, drive(data = false, hold = false), "open latch should pass a zero")
+        assertEquals(true, drive(data = true, hold = false), "open latch should pass a one")
+        assertEquals(true, drive(data = true, hold = true), "closing the latch should keep its one")
+        assertEquals(true, drive(data = false, hold = true), "held latch should ignore new data")
+        assertEquals(false, drive(data = false, hold = false), "reopened latch should follow to zero")
+        assertEquals(false, drive(data = false, hold = true), "closing the latch should keep its zero")
+        assertEquals(false, drive(data = true, hold = true), "held latch should ignore new data")
+        assertEquals(true, drive(data = true, hold = false), "reopened latch should follow to one")
+        assertTrue(simulator.unsettled().isEmpty())
+    }
+
+    @Test
+    fun `report cell geometry`() {
+        println("cell           size      footprint blocks nodes latency")
+        (technology.primitives.entries.map { it.key.name.lowercase() to it.value } +
+            listOf("input-terminal" to technology.inputTerminal, "output-terminal" to technology.outputTerminal))
+            .forEach { (name, cell) ->
+                val nodes = cell.blocks.count { (_, state) ->
+                    state.type.component == ComponentKind.TORCH || state.type.component == ComponentKind.REPEATER
+                }
+                println(
+                    name.padEnd(15) +
+                        "${cell.size.x}x${cell.size.y}x${cell.size.z}".padEnd(10) +
+                        "${cell.size.x * cell.size.z}".padEnd(10) +
+                        "${cell.blocks.size}".padEnd(7) +
+                        "$nodes".padEnd(6) +
+                        "${cell.latencyTicks}",
+                )
+            }
+    }
+}

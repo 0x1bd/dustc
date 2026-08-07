@@ -1,0 +1,26 @@
+module half_adder(
+    input a: bit,
+    input b: bit,
+    output sum: bit,
+    output carry: bit,
+) {
+    sum = a ^ b
+    carry = a & b
+}
+
+module full_adder(
+    input operands {
+        a: bit,
+        b: bit,
+        cin: bit,
+    },
+    output result {
+        sum: bit,
+        cout: bit,
+    },
+) {
+    let first = half_adder(a, b)
+    let second = half_adder(first.sum, cin)
+    sum = second.sum
+    cout = first.carry | second.carry
+}

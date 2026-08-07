@@ -1,0 +1,13 @@
+module latch1(
+    input control {
+        hold: bit,
+    },
+    input data {
+        value: bit,
+    },
+    output state {
+        stored: bit,
+    },
+) {
+    stored = latch(value, hold)
+}

@@ -1,0 +1,8 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+out/
+*.iml
+.DS_Store
+/dustc

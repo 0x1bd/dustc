@@ -1,0 +1,17 @@
+module gates(
+    input operands {
+        a: bit,
+        b: bit,
+    },
+    output result {
+        both: bit,
+        either: bit,
+        different: bit,
+        inverted_a: bit,
+    },
+) {
+    both = a & b
+    either = a | b
+    different = a ^ b
+    inverted_a = ~a
+}
