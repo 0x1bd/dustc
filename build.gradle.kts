@@ -36,8 +36,8 @@ graalvmNative {
         named("main") {
             imageName.set("dustc")
             mainClass.set("org.kvxd.dust.cli.MainKt")
-            sharedLibrary.set(false)
             buildArgs.add("-O2")
+            buildArgs.add("-march=compatibility")
         }
     }
 }
