@@ -37,6 +37,10 @@ class RedstoneTechnology internal constructor(
         }
 
         (primitives.values + debugInputPad + debugOutputPad + inputTerminal + outputTerminal).forEach { cell ->
+            cell.pins.forEach { pin ->
+                require(pin.driveStrength in 1..Redstone.maximumSignalStrength)
+                require(pin.requiredStrength in 1..Redstone.maximumSignalStrength)
+            }
             cell.pins.map { it.position.x }.sorted().zipWithNext().forEach { (left, right) ->
                 require(right - left > isolation) {
                     "${cell.name} pins occupy columns $left and $right, which do not clear isolation $isolation"

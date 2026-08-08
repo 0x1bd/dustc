@@ -46,8 +46,8 @@ object MinecraftRedstone {
         size = CellSize(3, 2, 4),
         latencyTicks = 1,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 3)),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(2, 1, 3)),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 3), requiredStrength = 2),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(2, 1, 3), driveStrength = 11),
         ),
         palette = mapOf('#' to cellSupport, '+' to dust, '^' to northTorch),
         layers = mapOf(
@@ -61,9 +61,9 @@ object MinecraftRedstone {
         size = CellSize(6, 2, 5),
         latencyTicks = 2,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 4)),
-            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 4)),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(5, 1, 4)),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 4), requiredStrength = 2),
+            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 4), requiredStrength = 2),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(5, 1, 4), driveStrength = 12),
         ),
         palette = mapOf('#' to cellSupport, '+' to dust, '^' to northTorch, '>' to eastTorch),
         layers = mapOf(
@@ -77,9 +77,9 @@ object MinecraftRedstone {
         size = CellSize(5, 2, 3),
         latencyTicks = 1,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 2)),
-            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 2)),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(4, 1, 2)),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 2), requiredStrength = 1),
+            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 2), requiredStrength = 1),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(4, 1, 2), driveStrength = 9),
         ),
         palette = mapOf('#' to cellSupport, '+' to dust, 'N' to northRepeater),
         layers = mapOf(
@@ -93,9 +93,9 @@ object MinecraftRedstone {
         size = CellSize(13, 2, 9),
         latencyTicks = 4,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 8)),
-            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 8)),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(12, 1, 8)),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 8), requiredStrength = 9),
+            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 8), requiredStrength = 7),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(12, 1, 8), driveStrength = 15),
         ),
         palette = mapOf(
             '#' to cellSupport,
@@ -135,9 +135,9 @@ object MinecraftRedstone {
         size = CellSize(5, 2, 3),
         latencyTicks = 1,
         pins = listOf(
-            CellPin("d", PinDirection.INPUT, BlockPos(0, 1, 2)),
-            CellPin("hold", PinDirection.INPUT, BlockPos(2, 1, 2)),
-            CellPin("q", PinDirection.OUTPUT, BlockPos(4, 1, 2)),
+            CellPin("d", PinDirection.INPUT, BlockPos(0, 1, 2), requiredStrength = 4),
+            CellPin("hold", PinDirection.INPUT, BlockPos(2, 1, 2), requiredStrength = 1),
+            CellPin("q", PinDirection.OUTPUT, BlockPos(4, 1, 2), driveStrength = 12),
         ),
         palette = mapOf(
             '#' to cellSupport,
