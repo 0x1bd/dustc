@@ -1,0 +1,127 @@
+{
+  "name": "dust",
+  "displayName": "Dust",
+  "description": "Syntax highlighting and schematic builds for the Dust redstone hardware language.",
+  "version": "0.1.0",
+  "publisher": "kvxd",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0x1bd/dustc.git"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "dust",
+    "minecraft",
+    "redstone",
+    "hardware"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:dust"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "dust",
+        "aliases": [
+          "Dust",
+          "dust"
+        ],
+        "extensions": [
+          ".dust"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dust",
+        "scopeName": "source.dust",
+        "path": "./syntaxes/dust.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "dust",
+        "path": "./snippets/dust.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "dust.build",
+        "title": "Build Schematic",
+        "category": "Dust"
+      },
+      {
+        "command": "dust.downloadCompiler",
+        "title": "Download Latest dustc",
+        "category": "Dust"
+      },
+      {
+        "command": "dust.showCompilerPath",
+        "title": "Show Compiler Path",
+        "category": "Dust"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "dust.build",
+          "when": "resourceLangId == dust",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Dust",
+      "properties": {
+        "dust.compilerPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `dustc` executable. When empty the extension uses the downloaded compiler, then `./dustc` in the workspace, then `dustc` on `PATH`."
+        },
+        "dust.compilerRepository": {
+          "type": "string",
+          "default": "0x1bd/dustc",
+          "markdownDescription": "GitHub `owner/repo` that **Dust: Download Latest dustc** pulls release binaries from."
+        },
+        "dust.buildArguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra arguments passed to `dustc build`, for example `--terminals`."
+        }
+      }
+    },
+    "problemMatchers": [
+      {
+        "name": "dustc",
+        "owner": "dust",
+        "source": "dustc",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": [
+          {
+            "regexp": "^error: (.*)$",
+            "message": 1
+          },
+          {
+            "regexp": "^\\s*-->\\s*(.+):(\\d+):(\\d+)$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ]
+      }
+    ]
+  }
+}

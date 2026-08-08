@@ -31,3 +31,9 @@ file.
 | `module_name(a, b)`      | Inline module instance returning an output bundle |
 
 See [language reference](docs/language.md) for the complete syntax.
+
+## Editor support
+
+[`editors/vscode`](editors/vscode) is a VS Code / VSCodium extension: `.dust` highlighting,
+snippets, and a build command that reports `dustc` errors inline. It downloads a release binary for
+you, so no toolchain is needed to use it. Tagged releases attach the packaged `dust-vscode.vsix`.

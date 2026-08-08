@@ -1,0 +1,43 @@
+{
+  "Module": {
+    "prefix": "module",
+    "description": "Declare a module with one input and one output group",
+    "body": [
+      "module ${1:name}(",
+      "\tinput ${2:operands} {",
+      "\t\t${3:a}: ${4|bit,bits<4>,bits<8>|},",
+      "\t},",
+      "\toutput ${5:result} {",
+      "\t\t${6:y}: ${7|bit,bits<4>,bits<8>|},",
+      "\t},",
+      ") {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "For loop": {
+    "prefix": "for",
+    "description": "Unrolled elaboration loop",
+    "body": ["for ${1:i} in ${2:0}..${3:8} {", "\t$0", "}"]
+  },
+  "Let binding": {
+    "prefix": "let",
+    "description": "Name a signal expression",
+    "body": ["let ${1:name} = $0"]
+  },
+  "Mutable let binding": {
+    "prefix": "letmut",
+    "description": "Rebindable elaboration value",
+    "body": ["let mut ${1:carry} = ${2:cin}"]
+  },
+  "Multiplexer": {
+    "prefix": "mux",
+    "description": "Equal-width multiplexer",
+    "body": ["mux(${1:select}, ${2:low}, ${3:high})"]
+  },
+  "Latch": {
+    "prefix": "latch",
+    "description": "One-bit latch; high hold keeps the old value",
+    "body": ["latch(${1:data}, ${2:hold})"]
+  }
+}

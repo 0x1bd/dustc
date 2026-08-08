@@ -1,0 +1,160 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Dust",
+  "scopeName": "source.dust",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#module" },
+    { "include": "#port" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#numbers" },
+    { "include": "#call" },
+    { "include": "#member" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.dust",
+          "begin": "//",
+          "end": "$",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.dust" }
+          }
+        },
+        { "include": "#block-comment" }
+      ]
+    },
+    "block-comment": {
+      "name": "comment.block.dust",
+      "begin": "/\\*",
+      "end": "\\*/",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.comment.begin.dust" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.comment.end.dust" }
+      },
+      "patterns": [{ "include": "#block-comment" }]
+    },
+    "module": {
+      "match": "\\b(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.module.dust" },
+        "2": { "name": "entity.name.function.module.dust" }
+      }
+    },
+    "port": {
+      "match": "\\b(input|output)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.port.dust" },
+        "2": { "name": "variable.other.declaration.dust" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.loop.dust",
+          "match": "\\b(for|in)\\b"
+        },
+        {
+          "name": "keyword.declaration.dust",
+          "match": "\\b(module|input|output)\\b"
+        },
+        {
+          "name": "storage.modifier.dust",
+          "match": "\\bmut\\b"
+        },
+        {
+          "name": "keyword.other.let.dust",
+          "match": "\\blet\\b"
+        },
+        {
+          "name": "keyword.operator.word.dust",
+          "match": "\\b(and|or)\\b"
+        }
+      ]
+    },
+    "types": {
+      "name": "support.type.primitive.dust",
+      "match": "\\b(bits|bit)\\b"
+    },
+    "builtins": {
+      "name": "support.function.builtin.dust",
+      "match": "\\b(mux|latch)\\b(?=\\s*\\()"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.dust",
+          "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.dust",
+          "match": "\\b0[bB][01][01_]*\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.dust",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "call": {
+      "match": "\\b(?!(?:module|input|output|let|mut|for|in|and|or|bit|bits|mux|latch)\\b)([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.call.dust" }
+      }
+    },
+    "member": {
+      "match": "(\\.)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.accessor.dust" },
+        "2": { "name": "variable.other.member.dust" }
+      }
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.range.dust",
+          "match": "\\.\\.=?"
+        },
+        {
+          "name": "keyword.operator.logical.dust",
+          "match": "[&|^~!]"
+        },
+        {
+          "name": "keyword.operator.assignment.dust",
+          "match": "="
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.typeparameters.dust",
+          "match": "[<>]"
+        },
+        {
+          "name": "punctuation.section.block.dust",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.brackets.dust",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.parens.dust",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.separator.dust",
+          "match": "[,:]"
+        }
+      ]
+    }
+  }
+}
