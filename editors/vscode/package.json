@@ -90,6 +90,19 @@
           "default": "0x1bd/dustc",
           "markdownDescription": "GitHub `owner/repo` that **Dust: Download Latest dustc** pulls release binaries from."
         },
+        "dust.updateChannel": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "nightly"
+          ],
+          "enumDescriptions": [
+            "Newest tagged release.",
+            "Rolling prerelease built from every push to main."
+          ],
+          "default": "stable",
+          "markdownDescription": "Which release **Dust: Download Latest dustc** installs from."
+        },
         "dust.buildArguments": {
           "type": "array",
           "items": {

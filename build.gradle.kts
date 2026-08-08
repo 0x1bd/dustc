@@ -8,7 +8,11 @@ plugins {
 }
 
 group = "org.kvxd.dust"
-version = "0.1.0"
+
+val dustcVersion: Provider<String> =
+    providers.fileContents(layout.projectDirectory.file("dustc.version")).asText.map(String::trim)
+
+version = dustcVersion.get()
 
 kotlin {
     jvmToolchain(21)
@@ -37,13 +41,76 @@ graalvmNative {
             mainClass.set("org.kvxd.dust.cli.MainKt")
             sharedLibrary.set(false)
             buildArgs.add("-O2")
-            // AMD64 defaults to x86-64-v3, which faults on older hosts; AArch64 already
-            // defaults to the armv8-a baseline and rejects "compatibility".
             if (System.getProperty("os.arch") in setOf("x86_64", "amd64")) {
                 buildArgs.add("-march=compatibility")
             }
         }
     }
+}
+
+val generateBuildInfo = tasks.register("generateBuildInfo") {
+    description = "Generates BuildInfo.kt from dustc.version."
+    val version = dustcVersion
+    val outputDirectory = layout.buildDirectory.dir("generated/buildInfo/kotlin")
+    inputs.property("version", version)
+    outputs.dir(outputDirectory)
+    doLast {
+        val target = outputDirectory.get().file("org/kvxd/dust/BuildInfo.kt").asFile
+        target.parentFile.mkdirs()
+        target.writeText(
+            """
+            package org.kvxd.dust
+
+            const val DUSTC_VERSION: String = "${version.get()}"
+            """.trimIndent() + "\n",
+        )
+    }
+}
+
+kotlin.sourceSets.named("main") {
+    kotlin.srcDir(generateBuildInfo)
+}
+
+val extensionManifest = layout.projectDirectory.file("editors/vscode/package.json")
+val manifestVersion = Regex("^  \"version\": \"([^\"]*)\"", RegexOption.MULTILINE)
+
+tasks.register("syncVersion") {
+    description = "Writes dustc.version into the VS Code extension manifest."
+    val version = dustcVersion
+    val manifest = extensionManifest
+    inputs.property("version", version)
+    doLast {
+        val file = manifest.asFile
+        val text = file.readText()
+        val updated = manifestVersion.replaceFirst(text, "  \"version\": \"${version.get()}\"")
+        if (updated == text) {
+            logger.lifecycle("editors/vscode/package.json already at ${version.get()}")
+        } else {
+            file.writeText(updated)
+            logger.lifecycle("editors/vscode/package.json set to ${version.get()}")
+        }
+    }
+}
+
+val verifyVersion = tasks.register("verifyVersion") {
+    description = "Fails when the VS Code extension manifest drifts from dustc.version."
+    val version = dustcVersion
+    val manifest = extensionManifest
+    inputs.property("version", version)
+    inputs.file(manifest)
+    doLast {
+        val declared = manifestVersion.find(manifest.asFile.readText())?.groupValues?.get(1)
+        if (declared != version.get()) {
+            error(
+                "editors/vscode/package.json declares version ${declared ?: "<none>"}, " +
+                    "but dustc.version says ${version.get()}; run ./gradlew syncVersion",
+            )
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn(verifyVersion)
 }
 
 tasks.register<Copy>("installNative") {

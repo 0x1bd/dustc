@@ -25,7 +25,7 @@ jobs:
           distribution: temurin
           java-version: "25"
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew test --console=plain
+      - run: ./gradlew check --console=plain
 
   native-image:
     name: dustc (${{ matrix.target }})
@@ -122,3 +122,41 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "dustc $GITHUB_REF_NAME" --generate-notes release/*
+
+  nightly:
+    name: Nightly prerelease
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.repository.fork
+    needs: [native-image, extension]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: nightly-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name 'dustc-*' -o -name '*.vsix' \) -exec cp {} release/ \;
+          ls -l release
+      - name: Refresh nightly prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(cat dustc.version)"
+          short="${GITHUB_SHA:0:7}"
+          # The nightly tag has to move to this commit, which means replacing the release.
+          gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create nightly \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "dustc nightly ($version, $short)" \
+            --notes "Rolling build of \`main\` at $GITHUB_SHA. Replaced on every push, so these downloads are not archival. Set \`dust.updateChannel\` to \`nightly\` to track it from the editor." \
+            release/*

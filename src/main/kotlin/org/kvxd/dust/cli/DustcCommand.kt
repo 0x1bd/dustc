@@ -1,5 +1,6 @@
 package org.kvxd.dust.cli
 
+import org.kvxd.dust.DUSTC_VERSION
 import picocli.CommandLine.Command
 import picocli.CommandLine.Spec
 import picocli.CommandLine.Model.CommandSpec
@@ -8,7 +9,7 @@ import picocli.CommandLine.Model.CommandSpec
     name = "dustc",
     description = ["Compile dust logic-gate circuits to Minecraft schematics."],
     mixinStandardHelpOptions = true,
-    version = ["dustc 0.1.0"],
+    version = ["dustc " + DUSTC_VERSION],
     subcommands = [BuildCommand::class],
 )
 class DustcCommand : Runnable {

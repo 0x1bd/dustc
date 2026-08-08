@@ -23,7 +23,11 @@ When `dust.compilerPath` is empty the extension resolves, in order: the download
 |---------------------------|---------------|---------------------------------------------------|
 | `dust.compilerPath`       | `""`          | Explicit `dustc` path, overriding the search      |
 | `dust.compilerRepository` | `0x1bd/dustc` | GitHub repository to download releases from       |
+| `dust.updateChannel`      | `stable`      | `stable` for the newest tag, `nightly` for `main` |
 | `dust.buildArguments`     | `[]`          | Extra `dustc build` arguments, e.g. `--terminals` |
+
+`stable` installs the newest tagged release. `nightly` follows the rolling prerelease rebuilt on
+every push to `main`.
 
 ## Installing from a `.vsix`
 

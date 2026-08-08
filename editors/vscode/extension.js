@@ -113,7 +113,8 @@ async function showCompilerPath(context) {
         await vscode.window.showWarningMessage("dustc was not found. Run “Dust: Download Latest dustc”.");
         return;
     }
-    const tag = context.globalState.get(INSTALLED_TAG);
+    const stamp = context.globalState.get(INSTALLED_TAG);
+    const tag = typeof stamp === "string" ? stamp.split("@")[0] : undefined;
     const suffix = found === managedPath(context) && tag ? ` (${tag})` : "";
     await vscode.window.showInformationMessage(`dustc: ${found}${suffix}`);
 }
@@ -129,20 +130,22 @@ async function downloadCompiler(context, interactive) {
     }
 
     const repository = settings().get("compilerRepository", "0x1bd/dustc").trim();
+    const channel = settings().get("updateChannel", "stable");
     const destination = managedPath(context);
 
     try {
         return await vscode.window.withProgress(
             {location: vscode.ProgressLocation.Notification, title: "Downloading dustc", cancellable: true},
             async (progress, token) => {
-                progress.report({message: "looking up latest release"});
-                const release = await latestRelease(repository, asset, token);
+                progress.report({message: `looking up ${channel} release`});
+                const release = await latestRelease(repository, asset, channel, token);
                 const download = release.assets.find((candidate) => candidate.name === asset);
                 if (!download) {
                     throw new Error(`release ${release.tag_name} has no ${asset} asset`);
                 }
 
-                if (release.tag_name === context.globalState.get(INSTALLED_TAG) && isExecutableFile(destination)) {
+                const stamp = `${release.tag_name}@${download.id}`;
+                if (stamp === context.globalState.get(INSTALLED_TAG) && isExecutableFile(destination)) {
                     if (interactive) {
                         void vscode.window.showInformationMessage(`dustc ${release.tag_name} is already installed.`);
                     }
@@ -153,7 +156,7 @@ async function downloadCompiler(context, interactive) {
                 await fetchToFile(download.browser_download_url, destination, token, (fraction) =>
                     progress.report({message: `${release.tag_name} — ${Math.round(fraction * 100)}%`}),
                 );
-                await context.globalState.update(INSTALLED_TAG, release.tag_name);
+                await context.globalState.update(INSTALLED_TAG, stamp);
 
                 if (interactive) {
                     void vscode.window.showInformationMessage(`Installed dustc ${release.tag_name}.`);
@@ -168,17 +171,21 @@ async function downloadCompiler(context, interactive) {
     }
 }
 
-async function latestRelease(repository, asset, token) {
+async function latestRelease(repository, asset, channel, token) {
     const base = `https://api.github.com/repos/${repository}/releases`;
-    try {
-        const release = JSON.parse(await fetchText(`${base}/latest`, token));
-        if ((release.assets ?? []).some((candidate) => candidate.name === asset)) return release;
-    } catch (error) {
-        if (error instanceof vscode.CancellationError) throw error;
+    const carriesAsset = (release) => (release.assets ?? []).some((candidate) => candidate.name === asset);
+
+    if (channel !== "nightly") {
+        try {
+            const release = JSON.parse(await fetchText(`${base}/latest`, token));
+            if (carriesAsset(release)) return release;
+        } catch (error) {
+            if (error instanceof vscode.CancellationError) throw error;
+        }
     }
 
     const releases = JSON.parse(await fetchText(`${base}?per_page=20`, token));
-    const match = releases.find((release) => (release.assets ?? []).some((a) => a.name === asset));
+    const match = releases.find(carriesAsset);
     if (!match) throw new Error(`no release of ${repository} publishes ${asset}`);
     return match;
 }
