@@ -3,7 +3,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     kotlin("jvm") version "2.4.0"
     kotlin("kapt") version "2.4.0"
-    `java-library`
     application
     id("org.graalvm.buildtools.native") version "1.1.5"
 }
@@ -36,8 +35,13 @@ graalvmNative {
         named("main") {
             imageName.set("dustc")
             mainClass.set("org.kvxd.dust.cli.MainKt")
+            sharedLibrary.set(false)
             buildArgs.add("-O2")
-            buildArgs.add("-march=compatibility")
+            // AMD64 defaults to x86-64-v3, which faults on older hosts; AArch64 already
+            // defaults to the armv8-a baseline and rejects "compatibility".
+            if (System.getProperty("os.arch") in setOf("x86_64", "amd64")) {
+                buildArgs.add("-march=compatibility")
+            }
         }
     }
 }

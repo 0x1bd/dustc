@@ -2,11 +2,17 @@ name: Build
 
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -22,9 +28,21 @@ jobs:
       - run: ./gradlew test --console=plain
 
   native-image:
-    name: GraalVM native image
+    name: dustc (${{ matrix.target }})
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            os: ubuntu-latest
+          - target: linux-aarch64
+            os: ubuntu-24.04-arm
+          - target: macos-aarch64
+            os: macos-latest
+          - target: windows-x86_64
+            os: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: graalvm/setup-graalvm@v1
@@ -35,8 +53,72 @@ jobs:
           native-image-job-reports: "true"
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew nativeCompile --console=plain
+        shell: bash
+
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            built=build/native/nativeCompile/dustc.exe
+            staged=dist/dustc-${{ matrix.target }}.exe
+          else
+            built=build/native/nativeCompile/dustc
+            staged=dist/dustc-${{ matrix.target }}
+          fi
+          if [ ! -f "$built" ]; then
+            echo "::error::native-image produced no executable at $built"
+            ls -l build/native/nativeCompile
+            exit 1
+          fi
+          cp "$built" "$staged"
+          chmod +x "$staged"
+          "$staged" --version
+
       - uses: actions/upload-artifact@v4
         with:
-          name: dustc-linux-x86_64
-          path: build/native/nativeCompile/dustc
+          name: dustc-${{ matrix.target }}
+          path: dist/dustc-${{ matrix.target }}*
           if-no-files-found: error
+
+  extension:
+    name: VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Package extension
+        working-directory: editors/vscode
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          npx --yes @vscode/vsce package --out "$GITHUB_WORKSPACE/dist/dust-vscode.vsix"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dust-vscode
+          path: dist/dust-vscode.vsix
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [native-image, extension]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name 'dustc-*' -o -name '*.vsix' \) -exec cp {} release/ \;
+          ls -l release
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "dustc $GITHUB_REF_NAME" --generate-notes release/*
