@@ -10,8 +10,8 @@ class Circuit internal constructor(
     val inputs: List<CircuitPort> = ports.filter { it.direction == CircuitPortDirection.INPUT }
     val outputs: List<CircuitPort> = ports.filter { it.direction == CircuitPortDirection.OUTPUT }
     val ioGroups: List<CircuitIoGroup> = ports
-        .groupBy { it.direction to it.ioGroup }
-        .map { (key, groupedPorts) -> CircuitIoGroup(key.second, key.first, groupedPorts) }
+        .groupBy { port -> Triple(port.direction, port.ioGroup, port.edge to port.panel) }
+        .map { (key, groupedPorts) -> CircuitIoGroup(key.second, key.first, groupedPorts, key.third.first, key.third.second) }
 
     init {
         require(name.matches(MODULE_NAME)) { "invalid module '$name'" }
@@ -19,6 +19,12 @@ class Circuit internal constructor(
         ports.filter { it.ioGroup != null }.groupBy { it.ioGroup }.forEach { (group, groupedPorts) ->
             require(groupedPorts.map { it.direction }.distinct().size == 1) {
                 "$name uses I/O group '$group' for both inputs and outputs"
+            }
+            require(groupedPorts.map { it.edge }.distinct().size == 1) {
+                "$name gives I/O group '$group' conflicting #[edge] constraints"
+            }
+            require(groupedPorts.map { it.panel }.distinct().size == 1) {
+                "$name gives I/O group '$group' conflicting #[panel] constraints"
             }
         }
     }

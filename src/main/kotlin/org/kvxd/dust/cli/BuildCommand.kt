@@ -36,10 +36,13 @@ class BuildCommand : Callable<Int> {
         require(schematic.fileName.toString().endsWith(".schem")) { "output must end in .schem" }
 
         val module = CircuitSourceLoader().load(source, moduleName)
-        spec.commandLine().out.println("dustc: synthesizing ${module.name}")
+        val progress = CliProgressRenderer(spec.commandLine().out)
         val io = if (terminals) PhysicalIo.TERMINALS else PhysicalIo.DEBUG_PADS
-        val compiled = module.compile(io = io)
-        compiled.writeSchematic(schematic)
+        val compiled = try {
+            module.compile(io = io, progress = progress).also { it.writeSchematic(schematic, progress) }
+        } finally {
+            progress.finish()
+        }
         val physical = compiled.physical
         val matrix = physical.matrix
         spec.commandLine().out.println(

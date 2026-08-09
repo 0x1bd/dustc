@@ -33,4 +33,5 @@ internal enum class TokenType(val text: String = "") {
     CARET("^"),
     TILDE("~"),
     BANG("!"),
+    HASH("#"),
 }

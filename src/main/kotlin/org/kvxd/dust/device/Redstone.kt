@@ -43,14 +43,16 @@ object Redstone {
         }
     }
 
-    fun redstonePower(access: BlockAccess, pos: BlockPos, side: Direction, dustPower: Boolean = true): Int =
-        if (access.blockAt(pos).type.isSolid) {
+    fun redstonePower(access: BlockAccess, pos: BlockPos, side: Direction, dustPower: Boolean = true): Int {
+        val type = access.blockAt(pos).type
+        return if (type.isSolid && !type.isTransparent) {
             Direction.ALL.maxOf { neighbour ->
                 strongPower(access, pos.offset(neighbour), neighbour, dustPower)
             }
         } else {
             weakPower(access, pos, side, dustPower)
         }
+    }
 
     fun wirePower(access: BlockAccess, pos: BlockPos): Int {
         var direct = 0
@@ -65,7 +67,7 @@ object Redstone {
                 if (!above.type.isSolid && !neighbour.type.isTransparent) {
                     wire = maxOf(wire, wireStrength(access, neighbourPos.offset(Direction.UP)))
                 }
-                if (!neighbour.type.isSolid) {
+                if (!neighbour.type.isSolid || neighbour.type.isTransparent) {
                     wire = maxOf(wire, wireStrength(access, neighbourPos.offset(Direction.DOWN)))
                 }
             }
@@ -116,7 +118,9 @@ object Redstone {
         val state = access.blockAt(pos)
         if (state.type != BlockType.REDSTONE_WALL_TORCH) return false
         val facing = state[Properties.FACING]
-        return redstonePower(access, pos.offset(facing.opposite), facing.opposite) > 0
+        val supportPos = pos.offset(facing.opposite)
+        if (!access.blockAt(supportPos).type.isSolid) return false
+        return redstonePower(access, supportPos, facing.opposite) > 0
     }
 
     fun lampShouldBeLit(access: BlockAccess, pos: BlockPos): Boolean =

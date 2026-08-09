@@ -25,14 +25,14 @@ internal class Parser(
         if (!check(TokenType.RPAREN)) {
             do {
                 if (check(TokenType.RPAREN)) break
-                ports += parsePortDeclaration()
+                ports += parsePortDeclaration(parseAttributes())
             } while (match(TokenType.COMMA))
         }
         consume(TokenType.RPAREN, "expected ')' after module ports")
         return ModuleSyntax(name, ports, parseBlock(), location)
     }
 
-    private fun parsePortDeclaration(): List<PortSyntax> {
+    private fun parsePortDeclaration(attributes: List<AttributeSyntax>): List<PortSyntax> {
         val direction = when {
             match(TokenType.INPUT) -> PortDirection.INPUT
             match(TokenType.OUTPUT) -> PortDirection.OUTPUT
@@ -40,20 +40,25 @@ internal class Parser(
         }
         val first = consume(TokenType.ID, "expected a port or group name")
         if (!match(TokenType.LBRACE)) {
-            return listOf(parsePort(direction, first, group = null))
+            return listOf(parsePort(direction, first, group = null, attributes))
         }
 
         val ports = arrayListOf<PortSyntax>()
         if (check(TokenType.RBRACE)) error("I/O group '${first.value}' cannot be empty")
         do {
             if (check(TokenType.RBRACE)) break
-            ports += parsePort(direction, consume(TokenType.ID, "expected a port name"), first.value)
+            ports += parsePort(direction, consume(TokenType.ID, "expected a port name"), first.value, attributes)
         } while (match(TokenType.COMMA))
         consume(TokenType.RBRACE, "expected '}' after I/O group '${first.value}'")
         return ports
     }
 
-    private fun parsePort(direction: PortDirection, nameToken: Token, group: String?): PortSyntax {
+    private fun parsePort(
+        direction: PortDirection,
+        nameToken: Token,
+        group: String?,
+        attributes: List<AttributeSyntax>,
+    ): PortSyntax {
         consume(TokenType.COLON, "expected ':' after port name")
         val type = current()
         val typeName = consumeIdentifier("expected 'bit' or 'bits<width>'")
@@ -71,12 +76,13 @@ internal class Parser(
                     value
                 }
             }
+
             else -> {
                 reporter.error("unknown signal type '$typeName'", type)
                 1
             }
         }
-        return PortSyntax(direction, nameToken.value, width, group, nameToken)
+        return PortSyntax(direction, nameToken.value, width, group, attributes, nameToken)
     }
 
     private fun parseBlock(): BlockSyntax {
@@ -93,19 +99,26 @@ internal class Parser(
         return BlockSyntax(statements, location)
     }
 
-    private fun parseStatement(): StatementSyntax = when (current().type) {
-        TokenType.LET -> parseVariable()
-        TokenType.FOR -> parseFor()
-        TokenType.LBRACE -> parseBlock()
-        else -> parseExpressionStatement()
+    private fun parseStatement(): StatementSyntax {
+        val attributes = parseAttributes()
+        if (attributes.isNotEmpty()) {
+            if (!check(TokenType.LET)) error("placement attributes are only supported on 'let' bindings inside a module")
+            return parseVariable(attributes)
+        }
+        return when (current().type) {
+            TokenType.LET -> parseVariable(emptyList())
+            TokenType.FOR -> parseFor()
+            TokenType.LBRACE -> parseBlock()
+            else -> parseExpressionStatement()
+        }
     }
 
-    private fun parseVariable(): VariableSyntax {
+    private fun parseVariable(attributes: List<AttributeSyntax>): VariableSyntax {
         val location = advance()
         val mutable = match(TokenType.MUT)
         val name = consumeIdentifier("expected a signal name")
         consume(TokenType.EQ, "a local signal needs an initializer")
-        return VariableSyntax(name, mutable, parseExpression(), location)
+        return VariableSyntax(name, mutable, parseExpression(), attributes, location)
     }
 
     private fun parseFor(): ForSyntax {
@@ -163,12 +176,14 @@ internal class Parser(
                     val location = previous()
                     AccessSyntax(expression, consumeIdentifier("expected an output name"), location)
                 }
+
                 match(TokenType.LBRACKET) -> {
                     val location = previous()
                     val index = parseExpression()
                     consume(TokenType.RBRACKET, "expected ']'")
                     IndexSyntax(expression, index, location)
                 }
+
                 else -> return expression
             }
         }
@@ -181,17 +196,20 @@ internal class Parser(
                 advance()
                 IntegerSyntax(parseInteger(token), token)
             }
+
             TokenType.ID -> {
                 advance()
                 if (check(TokenType.LPAREN)) CallSyntax(token.value, parseArguments(), token)
                 else NameSyntax(token.value, token)
             }
+
             TokenType.LPAREN -> {
                 advance()
                 val expression = parseExpression()
                 consume(TokenType.RPAREN, "expected ')'")
                 expression
             }
+
             else -> error("expected a signal or gate expression")
         }
     }
@@ -207,6 +225,29 @@ internal class Parser(
         }
         consume(TokenType.RPAREN, "expected ')' after arguments")
         return arguments
+    }
+
+    private fun parseAttributes(): List<AttributeSyntax> = buildList {
+        while (match(TokenType.HASH)) {
+            val location = previous()
+            consume(TokenType.LBRACKET, "expected '[' after '#'")
+            val name = consumeIdentifier("expected an attribute name")
+            val arguments = arrayListOf<Token>()
+            if (match(TokenType.LPAREN)) {
+                if (!check(TokenType.RPAREN)) {
+                    do {
+                        val argument = current()
+                        if (argument.type != TokenType.ID && argument.type != TokenType.INT) {
+                            error("attribute arguments must be names or integers")
+                        }
+                        arguments += advance()
+                    } while (match(TokenType.COMMA))
+                }
+                consume(TokenType.RPAREN, "expected ')' after attribute arguments")
+            }
+            consume(TokenType.RBRACKET, "expected ']' after attribute")
+            add(AttributeSyntax(name, arguments, location))
+        }
     }
 
     private fun parseInteger(token: Token): Int {
@@ -232,7 +273,8 @@ internal class Parser(
                     if (depth == 0) return
                     depth--
                 }
-                TokenType.LET, TokenType.FOR -> if (depth == 0) return
+
+                TokenType.LET, TokenType.FOR, TokenType.HASH -> if (depth == 0) return
                 else -> if (depth == 0 && startsLine()) return
             }
             advance()

@@ -5,9 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.kvxd.dust.compile
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockType
-import org.kvxd.dust.device.SignBlockEntity
+import org.kvxd.dust.physical.PhysicalIoEdge
 
 class DustLanguageTest {
     @Test
@@ -25,76 +23,169 @@ class DustLanguageTest {
     }
 
     @Test
-    fun `io groups form lower input and upper output tiers`() {
-        val module = DustLanguage.compile(
+    fun `io groups do not impose physical terminal strips`() {
+        fun compile(grouped: Boolean) = DustLanguage.compile(
+            if (grouped) {
+                """
+                module panel(
+                    input operands {
+                        a: bit,
+                        b: bit,
+                    },
+                    output result {
+                        y: bit,
+                    },
+                ) {
+                    y = a ^ b
+                }
+                """.trimIndent()
+            } else {
+                """
+                module panel(
+                    input a: bit,
+                    input b: bit,
+                    output y: bit,
+                ) {
+                    y = a ^ b
+                }
+                """.trimIndent()
+            },
+            if (grouped) "grouped.dust" else "plain.dust",
+        ).single().compile().physical
+
+        val grouped = compile(true)
+        val plain = compile(false)
+        val names = listOf("input-a", "input-b", "output-y")
+        assertEquals(
+            names.associateWith { name -> grouped.cells.single { it.name == name }.origin },
+            names.associateWith { name -> plain.cells.single { it.name == name }.origin },
+        )
+    }
+
+    @Test
+    fun `panel marks named io groups as compact physical interfaces`() {
+        val circuit = DustLanguage.compile(
             """
             module panel(
-                input controls {
-                    enable: bit,
-                    select: bit,
-                },
-                input data {
-                    a: bit,
-                    b: bit,
-                },
-                output indicators {
-                    selected: bit,
-                    active: bit,
-                },
+                #[panel] input operands { a: bits<2>, b: bit },
+                #[panel] output result { y: bits<2> },
             ) {
-                let chosen = mux(select, a, b)
-                selected = chosen
-                active = enable & chosen
+                y[0] = a[0] ^ b
+                y[1] = a[1] ^ b
             }
             """.trimIndent(),
             "panel.dust",
         ).single()
-        val design = module.compile().physical
-        val cells = design.cells.associateBy { it.name }
-        val inputs = listOf("input-enable", "input-select", "input-a", "input-b").map { cells.getValue(it) }
-        val outputs = listOf("output-selected", "output-active").map { cells.getValue(it) }
-        assertEquals(1, (inputs + outputs).map { it.row }.distinct().size)
-        assertEquals(listOf(0, 3, 6, 9), inputs.map { it.origin.x })
-        assertEquals(listOf(0, 3), outputs.map { it.origin.x })
-        assertEquals(inputs.take(outputs.size).map { it.origin.x }, outputs.map { it.origin.x })
-        assertEquals(inputs.take(outputs.size).map { it.origin.z }, outputs.map { it.origin.z })
-        assertTrue(inputs.maxOf { it.origin.x } < design.cells.filter { it.name.startsWith("gate-") }.minOf { it.origin.x })
-        val inputLeverY = inputs.first().origin.y + 1
-        val outputLampY = outputs.first().origin.y + 2
-        assertEquals(inputLeverY + 1, outputLampY)
-        outputs.forEachIndexed { index, output ->
-            val input = inputs[index]
-            val lever = design.inputs.getValue(input.name.removePrefix("input-"))
-            val inputRoutePin = input.pin("y")
-            val routePin = output.pin("a")
-            val lamp = design.outputs.getValue(output.name.removePrefix("output-"))
-            val routeSupport = routePin + BlockPos(0, -1, 0)
 
-            assertEquals(lever + BlockPos(0, 2, 0), lamp)
-            assertEquals(BlockType.REDSTONE_LAMP, design.matrix.blockAt(lamp).type)
-            assertEquals(BlockType.REDSTONE_WIRE, design.matrix.blockAt(inputRoutePin).type)
-            assertEquals(BlockType.REPEATER, design.matrix.blockAt(routePin).type)
-            assertEquals(BlockType.REDSTONE_WIRE, design.matrix.blockAt(routePin + BlockPos(0, 0, 1)).type)
-            assertEquals(inputRoutePin + BlockPos(0, 2, 0), routePin)
-            assertTrue(
-                design.routes.single { it.source == inputRoutePin }.routeBlocks.any { it.y == inputRoutePin.y },
-                "input at $inputRoutePin has no lower-plane access route",
+        assertTrue(circuit.ioGroups.single { it.name == "operands" }.panel)
+        assertTrue(circuit.ioGroups.single { it.name == "result" }.panel)
+    }
+
+    @Test
+    fun `edge accepts cardinal io constraints and does not propagate through flattened modules`() {
+        val cardinal = DustLanguage.compile(
+            """
+            module cardinal(
+                #[edge(north)] input north_in: bit,
+                #[edge(south)] input south_in: bit,
+                #[edge(east)] output east_out: bit,
+                #[edge(west)] output west_out: bit,
+            ) {
+                east_out = ~north_in
+                west_out = ~south_in
+            }
+            """.trimIndent(),
+            "cardinal.dust",
+        ).single()
+        assertEquals(PhysicalIoEdge.NORTH, cardinal.ports.single { it.name == "north_in" }.edge)
+        assertEquals(PhysicalIoEdge.SOUTH, cardinal.ports.single { it.name == "south_in" }.edge)
+        assertEquals(PhysicalIoEdge.EAST, cardinal.ports.single { it.name == "east_out" }.edge)
+        assertEquals(PhysicalIoEdge.WEST, cardinal.ports.single { it.name == "west_out" }.edge)
+
+        val grouped = DustLanguage.compile(
+            """
+            module grouped_edges(
+                #[edge(north)] input operands { a: bit, b: bit },
+                #[edge(south)] output result { y: bit },
+            ) {
+                y = a ^ b
+            }
+            """.trimIndent(),
+            "grouped-edges.dust",
+        ).single()
+        assertEquals(PhysicalIoEdge.NORTH, grouped.ioGroups.single { it.name == "operands" }.edge)
+        assertEquals(PhysicalIoEdge.SOUTH, grouped.ioGroups.single { it.name == "result" }.edge)
+
+        val nested = DustLanguage.compile(
+            """
+            module child(#[edge(east)] input a: bit, #[edge(west)] output y: bit) { y = ~a }
+            module top(input a: bit, output y: bit) { let child_result = child(a) y = child_result.y }
+            """.trimIndent(),
+            "nested-edge.dust",
+        ).single { it.name == "top" }
+        assertTrue(nested.ports.all { it.edge == null })
+    }
+
+    @Test
+    fun `placement attribute diagnostics reject invalid edge forms`() {
+        val badEdge = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(#[edge(up)] input a: bit, output y: bit) { y = ~a }",
+                "bad-edge.dust",
             )
-            assertTrue(
-                routePin + BlockPos(0, 0, 1) in design.routes.single { routePin in it.sinks }.routeBlocks,
-                "output repeater at $routePin is not fed from its south input",
-            )
-            assertTrue(
-                design.routes.single { routePin in it.sinks }.routeBlocks.any { it.y == routePin.y },
-                "output at $routePin has no upper-plane return route",
-            )
-            assertTrue(lever.manhattanTo(routePin) > 1, "$lever can power output pin $routePin")
-            assertTrue(lever.manhattanTo(routeSupport) > 1, "$lever can power output support $routeSupport")
         }
-        val signs = design.matrix.blockEntities().values.filterIsInstance<SignBlockEntity>()
-        assertEquals(6, signs.size)
-        assertTrue(signs.any { it.lines == listOf("IN controls", "enable") })
-        assertTrue(signs.any { it.lines == listOf("OUT indicators", "selected") })
+        assertTrue("invalid edge 'up'" in badEdge.message.orEmpty())
+
+        val badArity = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(#[edge(north, south)] input a: bit, output y: bit) { y = ~a }",
+                "bad-edge-arity.dust",
+            )
+        }
+        assertTrue("#[edge] expects one of north, south, east, west" in badArity.message.orEmpty())
+
+        val localEdge = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(input a: bit, output y: bit) { #[edge(north)] let p = ~a y = p }",
+                "local-edge.dust",
+            )
+        }
+        assertTrue("#[edge] is only supported on top-level I/O" in localEdge.message.orEmpty())
+    }
+
+    @Test
+    fun `panel diagnostics require named north south io groups`() {
+        val ungrouped = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(#[panel] input a: bit, output y: bit) { y = ~a }",
+                "panel-ungrouped.dust",
+            )
+        }
+        assertTrue("#[panel] requires a named top-level I/O group" in ungrouped.message.orEmpty())
+
+        val arguments = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(#[panel(foo)] input operands { a: bit }, output y: bit) { y = ~a }",
+                "panel-arguments.dust",
+            )
+        }
+        assertTrue("#[panel] does not take arguments" in arguments.message.orEmpty())
+
+        val east = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(#[panel] #[edge(east)] input operands { a: bit }, output y: bit) { y = ~a }",
+                "panel-east.dust",
+            )
+        }
+        assertTrue("#[panel] currently supports north/south edges" in east.message.orEmpty())
+
+        val local = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(input a: bit, output y: bit) { #[panel] let p = ~a y = p }",
+                "panel-local.dust",
+            )
+        }
+        assertTrue("#[panel] is only supported on top-level I/O groups" in local.message.orEmpty())
     }
 
     @Test

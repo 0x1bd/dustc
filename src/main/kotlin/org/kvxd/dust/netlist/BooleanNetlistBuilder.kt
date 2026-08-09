@@ -8,6 +8,8 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
     private val outputs = linkedMapOf<String, Signal>()
     private val gates = mutableListOf<Gate>()
     private val instances = mutableListOf<CellInstance>()
+    private val placements = mutableMapOf<Signal, SignalPlacement>()
+    private val terminalPlacements = mutableMapOf<Signal, SignalPlacement>()
     private var nextSignal = 0
 
     fun input(name: String): Signal {
@@ -44,7 +46,7 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
     fun latch(data: Signal, hold: Signal): Signal = gate(Primitive.LATCH, data, hold)
 
     fun mux(select: Signal, whenFalse: Signal, whenTrue: Signal): Signal =
-        or(and(not(select), whenFalse), and(select, whenTrue))
+        gate(Primitive.MUX2, select, whenFalse, whenTrue)
 
     fun all(vararg terms: Signal): Signal {
         require(terms.isNotEmpty())
@@ -60,7 +62,16 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
         require(name.isNotBlank())
         require(inputs.isNotEmpty()) { "$name has no inputs" }
         require(outputs.isNotEmpty()) { "$name has no outputs" }
-        return BooleanNetlist(name, nextSignal, inputs.toMap(), outputs.toMap(), gates.toList(), instances.toList())
+        return BooleanNetlist(
+            name,
+            nextSignal,
+            inputs.toMap(),
+            outputs.toMap(),
+            gates.toList(),
+            instances.toList(),
+            placements.toMap(),
+            terminalPlacements.toMap(),
+        )
     }
 
     fun instance(
@@ -72,6 +83,42 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
             .associate { port -> port.name to List(port.width) { wire() } }
         connect(type, inputs + outputs, name)
         return outputs
+    }
+
+    internal fun place(signals: List<Signal>, tier: Int?, near: Set<Signal>) {
+        mergePlacement(placements, signals, tier, near, null)
+    }
+
+    internal fun placeTerminals(signals: List<Signal>, tier: Int?, near: Set<Signal>, edge: InterfaceEdge?) {
+        mergePlacement(terminalPlacements, signals, tier, near, edge)
+    }
+
+    private fun mergePlacement(
+        target: MutableMap<Signal, SignalPlacement>,
+        signals: List<Signal>,
+        tier: Int?,
+        near: Set<Signal>,
+        edge: InterfaceEdge?,
+    ) {
+        require(signals.isNotEmpty())
+        require(signals.all { it.index in 0 until nextSignal })
+        require(near.all { it.index in 0 until nextSignal })
+        signals.forEach { signal ->
+            val previous = target[signal] ?: SignalPlacement()
+            val mergedTier = when {
+                tier == null -> previous.tier
+                previous.tier == null -> tier
+                previous.tier == tier -> tier
+                else -> error("conflicting tier constraints for $signal: ${previous.tier} and $tier")
+            }
+            val mergedEdge = when {
+                edge == null -> previous.edge
+                previous.edge == null -> edge
+                previous.edge == edge -> edge
+                else -> error("conflicting edge constraints for $signal: ${previous.edge} and $edge")
+            }
+            target[signal] = SignalPlacement(mergedTier, previous.near + near - signal, mergedEdge)
+        }
     }
 
     fun connect(
@@ -88,7 +135,7 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
         vararg inputs: Signal,
         instanceName: String? = null,
     ): Signal {
-        val expected = if (primitive == Primitive.NOT) 1 else 2
+        val expected = primitive.cellType.ports.count { it.direction == PortDirection.INPUT }
         require(inputs.size == expected)
         require(inputs.all { it.index in 0 until nextSignal }) { "gate uses an unknown signal" }
         val output = Signal(nextSignal++)

@@ -11,6 +11,22 @@ object BuiltinCells {
     val xor2: CellType = combinational("xor2", listOf(input("a"), input("b")), output("y"), 4) {
         it[0] xor it[1]
     }
+    val mux2: CellType = CellType(
+        CellTypeId("mux2"),
+        listOf(input("select"), input("low"), input("high"), output("y")),
+        CellBehavior.Combinational { values ->
+            val select = values.getValue("select").single()
+            val value = if (select) values.getValue("high").single() else values.getValue("low").single()
+            mapOf("y" to booleanArrayOf(value))
+        },
+        CellTiming(
+            listOf(
+                arc("select", "y", 7),
+                arc("low", "y", 5),
+                arc("high", "y", 6),
+            ),
+        ),
+    )
     val latch: CellType = CellType(
         CellTypeId("latch"),
         listOf(input("d"), input("hold"), output("q")),
@@ -36,6 +52,7 @@ object BuiltinCells {
         and2,
         or2,
         xor2,
+        mux2,
         latch,
         inputPad,
         outputPad,

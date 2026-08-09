@@ -3,7 +3,10 @@ package org.kvxd.dust.technology
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.kvxd.dust.device.BlockPos
+import org.kvxd.dust.device.BlockType
 import org.kvxd.dust.device.ComponentKind
+import org.kvxd.dust.device.Properties
 import org.kvxd.dust.netlist.Primitive
 import org.kvxd.dust.physical.PhysicalCompiler
 import org.kvxd.dust.netlist.booleanNetlist
@@ -19,6 +22,7 @@ class CellLibraryTest {
             Triple(Primitive.AND2, listOf("a", "b")) { it[0] && it[1] },
             Triple(Primitive.OR2, listOf("a", "b")) { it[0] || it[1] },
             Triple(Primitive.XOR2, listOf("a", "b")) { it[0] xor it[1] },
+            Triple(Primitive.MUX2, listOf("select", "low", "high")) { if (it[0]) it[2] else it[1] },
         )
         cases.forEach { (primitive, names, expected) ->
             val netlist = booleanNetlist(primitive.name.lowercase()) {
@@ -28,6 +32,7 @@ class CellLibraryTest {
                     Primitive.AND2 -> and(inputs[0], inputs[1])
                     Primitive.OR2 -> or(inputs[0], inputs[1])
                     Primitive.XOR2 -> xor(inputs[0], inputs[1])
+                    Primitive.MUX2 -> mux(inputs[0], inputs[1], inputs[2])
                     Primitive.LATCH -> error("sequential")
                 }
                 output("y", out)
@@ -81,6 +86,35 @@ class CellLibraryTest {
         assertEquals(false, drive(data = true, hold = true), "held latch should ignore new data")
         assertEquals(true, drive(data = true, hold = false), "reopened latch should follow to one")
         assertTrue(simulator.unsettled().isEmpty())
+    }
+
+    @Test
+    fun `routing edge tails stay compact`() {
+        assertEquals(CellSize(3, 2, 2), technology.primitives.getValue(Primitive.NOT).size)
+        assertEquals(CellSize(5, 2, 3), technology.primitives.getValue(Primitive.AND2).size)
+        assertEquals(CellSize(13, 2, 7), technology.primitives.getValue(Primitive.XOR2).size)
+        assertEquals(CellSize(26, 8, 7), technology.primitives.getValue(Primitive.MUX2).size)
+    }
+
+    @Test
+    fun `wall torches are mounted to solid blocks`() {
+        technology.primitives.values.forEach { cell ->
+            val blocks = cell.blocks.toMap()
+            cell.blocks.forEach { (pos, state) ->
+                if (state.type == BlockType.REDSTONE_WALL_TORCH) {
+                    val support = blocks[pos.offset(state[Properties.FACING].opposite)]
+                    assertTrue(support?.type?.isSolid == true, "${cell.name} torch at $pos has support $support")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `xor compact tail has no stale supports`() {
+        val blocks = technology.primitives.getValue(Primitive.XOR2).blocks.toMap()
+        listOf(BlockPos(12, 0, 0), BlockPos(12, 0, 4), BlockPos(12, 0, 5)).forEach { pos ->
+            assertTrue(pos !in blocks, "xor2 still contains stale support at $pos")
+        }
     }
 
     @Test

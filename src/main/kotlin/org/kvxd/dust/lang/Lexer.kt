@@ -38,6 +38,7 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
             '^' -> token(TokenType.CARET)
             '~' -> token(TokenType.TILDE)
             '!' -> token(TokenType.BANG)
+            '#' -> token(TokenType.HASH)
             '<' -> token(TokenType.LESS)
             '>' -> token(TokenType.GREATER)
             '&' -> if (match('&')) error("'&&' is not an operator; use '&' for an AND gate") else token(TokenType.AMP)
@@ -57,9 +58,11 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
             text[start] == '0' && peek().lowercaseChar() == 'x' -> {
                 advance(); 16
             }
+
             text[start] == '0' && peek().lowercaseChar() == 'b' -> {
                 advance(); 2
             }
+
             else -> 10
         }
         while (peek() == '_' || peek().digitToIntOrNull(radix) != null) advance()
@@ -75,11 +78,13 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
                     line++
                     lineStart = cursor
                 }
+
                 '/' -> when (peek(1)) {
                     '/' -> while (peek() != '\n' && !atEnd()) advance()
                     '*' -> blockComment()
                     else -> return
                 }
+
                 else -> return
             }
         }
@@ -94,9 +99,11 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
                 peek() == '/' && peek(1) == '*' -> {
                     advance(); advance(); depth++
                 }
+
                 peek() == '*' && peek(1) == '/' -> {
                     advance(); advance(); depth--
                 }
+
                 else -> {
                     if (peek() == '\n') {
                         line++

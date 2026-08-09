@@ -39,5 +39,25 @@
     "prefix": "latch",
     "description": "One-bit latch; high hold keeps the old value",
     "body": ["latch(${1:data}, ${2:hold})"]
+  },
+  "Placement tier": {
+    "prefix": "tier",
+    "description": "Place a signal on a physical tier",
+    "body": ["#[tier(${1:0})]", "let ${2:name} = $0"]
+  },
+  "Placement near": {
+    "prefix": "near",
+    "description": "Place a signal near named placement targets",
+    "body": ["#[near(${1:target})]", "let ${2:name} = $0"]
+  },
+  "I/O edge": {
+    "prefix": "edge",
+    "description": "Constrain a top-level I/O port or group edge",
+    "body": ["#[edge(${1|north,south,east,west|})]"]
+  },
+  "I/O panel": {
+    "prefix": "panel",
+    "description": "Lay out a named top-level I/O group as a compact panel",
+    "body": ["#[panel]"]
   }
 }
