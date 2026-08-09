@@ -51,32 +51,32 @@ object MinecraftRedstone {
 
     private fun notCell(): StandardCell = cell(
         name = "not",
-        size = CellSize(3, 2, 4),
+        size = CellSize(3, 2, 2),
         latencyTicks = 1,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 3), requiredStrength = 2),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(2, 1, 3), driveStrength = 11),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 1), allowsHorizontalAbutment = false, requiredStrength = 1),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(2, 1, 1), driveStrength = 13),
         ),
-        palette = mapOf('#' to cellSupport, '+' to dust, '^' to northTorch),
+        palette = mapOf('#' to cellSupport, '+' to dust, '>' to eastTorch),
         layers = mapOf(
-            0 to listOf(".##", "#.#", "#.#", "#.#"),
-            1 to listOf("^++", "#.+", "+.+", "+.+"),
+            0 to listOf("..#", "#.#"),
+            1 to listOf("#>+", "+.+"),
         ),
     )
 
     private fun andCell(): StandardCell = cell(
         name = "and2",
-        size = CellSize(6, 2, 5),
+        size = CellSize(5, 2, 3),
         latencyTicks = 2,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 4), requiredStrength = 2),
-            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 4), requiredStrength = 2),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(5, 1, 4), driveStrength = 12),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 2), allowsHorizontalAbutment = false, requiredStrength = 1),
+            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 2), allowsHorizontalAbutment = false, requiredStrength = 1),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(4, 1, 2), driveStrength = 15),
         ),
-        palette = mapOf('#' to cellSupport, '+' to dust, '^' to northTorch, '>' to eastTorch),
+        palette = mapOf('#' to cellSupport, '+' to dust, '^' to northTorch, 'V' to southTorch),
         layers = mapOf(
-            0 to listOf("#####.", ".....#", "#.#..#", "#.#..#", "#.#..#"),
-            1 to listOf("++++#>", "^.^..+", "#.#..+", "+.+..+", "+.+..+"),
+            0 to listOf("####.", ".....", "....#"),
+            1 to listOf("++++#", "^.^.V", "#.#.+"),
         ),
     )
 
@@ -98,12 +98,12 @@ object MinecraftRedstone {
 
     private fun xorCell(): StandardCell = cell(
         name = "xor2",
-        size = CellSize(13, 2, 9),
+        size = CellSize(13, 2, 7),
         latencyTicks = 4,
         pins = listOf(
-            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 8), requiredStrength = 9),
-            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 8), requiredStrength = 7),
-            CellPin("y", PinDirection.OUTPUT, BlockPos(12, 1, 8), driveStrength = 15),
+            CellPin("a", PinDirection.INPUT, BlockPos(0, 1, 6), requiredStrength = 7),
+            CellPin("b", PinDirection.INPUT, BlockPos(2, 1, 6), requiredStrength = 5),
+            CellPin("y", PinDirection.OUTPUT, BlockPos(12, 1, 6), driveStrength = 15),
         ),
         palette = mapOf(
             '#' to cellSupport,
@@ -114,24 +114,20 @@ object MinecraftRedstone {
         ),
         layers = mapOf(
             0 to listOf(
-                "########..#.#",
+                "########..#..",
                 "#.....#.#.#..",
                 "#.####..#...#",
                 "#.#.#...#.#.#",
-                "#.#.####..#.#",
-                "#.#.........#",
-                "#.#.........#",
+                "#.#.####..#..",
                 "#.#..........",
                 "#.#.........#",
             ),
             1 to listOf(
-                "+E++++++#>+.+",
+                "+E++++++#>+..",
                 "+.....+.+.+..",
                 "+.+E++#>+.#>+",
                 "+.+.+...+.+.+",
-                "+.+.++++#>+.+",
-                "+.+.........+",
-                "+.+.........#",
+                "+.+.++++#>+.#",
                 "+.+.........V",
                 "+.+.........+",
             ),
@@ -163,61 +159,62 @@ object MinecraftRedstone {
 
         place(not, BlockPos(0, 0, 1))
         place(and, BlockPos(5, 0, 0))
-        place(or, BlockPos(13, 0, 2))
+        place(or, BlockPos(13, 0, 0))
         place(and, BlockPos(20, 0, 0))
-        listOf(BlockPos(3, 1, 4), BlockPos(4, 1, 4)).forEach(::signal)
-        listOf(BlockPos(11, 1, 4), BlockPos(12, 1, 4)).forEach(::signal)
+        listOf(BlockPos(3, 1, 2), BlockPos(4, 1, 2)).forEach(::signal)
+        listOf(BlockPos(10, 1, 2), BlockPos(11, 1, 2), BlockPos(12, 1, 2)).forEach(::signal)
 
         listOf(0, 7, 22).forEach { x ->
-            for (z in 5..8) {
-                signal(BlockPos(x, 1, z), if (z == 7) northRepeater else dust)
+            for (z in 3..6) {
+                signal(BlockPos(x, 1, z), if (z == 5) northRepeater else dust)
             }
         }
-        for (z in 5..8) {
-            signal(BlockPos(17, 1, z), if (z == 7) RedstoneBlocks.repeater(Direction.SOUTH) else dust)
+        for (z in 3..6) {
+            signal(BlockPos(17, 1, z), if (z == 5) RedstoneBlocks.repeater(Direction.SOUTH) else dust)
         }
 
         listOf(
-            BlockPos(1, 2, 6),
-            BlockPos(2, 3, 6),
+            BlockPos(1, 2, 4),
+            BlockPos(2, 3, 4),
+            BlockPos(3, 4, 4),
+            BlockPos(3, 4, 5),
             BlockPos(3, 4, 6),
-            BlockPos(3, 4, 7),
-            BlockPos(3, 4, 8),
         ).forEach(::signal)
         for (x in 4..20) {
-            signal(BlockPos(x, 4, 8), if (x == 12) eastRepeater else dust)
+            signal(BlockPos(x, 4, 6), if (x == 12) eastRepeater else dust)
         }
         listOf(
-            BlockPos(20, 3, 7),
-            BlockPos(20, 2, 6),
-            BlockPos(20, 1, 5),
+            BlockPos(20, 3, 5),
+            BlockPos(20, 2, 4),
+            BlockPos(20, 1, 3),
         ).forEach(::signal)
 
-        signal(BlockPos(25, 1, 5), RedstoneBlocks.repeater(Direction.SOUTH))
-        signal(BlockPos(25, 1, 6))
+        signal(BlockPos(25, 1, 2))
+        signal(BlockPos(25, 1, 3), RedstoneBlocks.repeater(Direction.SOUTH))
+        signal(BlockPos(25, 1, 4))
         listOf(
-            BlockPos(24, 2, 6),
-            BlockPos(23, 3, 6),
-            BlockPos(22, 4, 6),
-            BlockPos(21, 5, 6),
-            BlockPos(20, 6, 6),
-            BlockPos(19, 7, 6),
-            BlockPos(18, 6, 6),
-            BlockPos(17, 5, 6),
-            BlockPos(16, 4, 6),
-            BlockPos(15, 3, 6),
-            BlockPos(15, 2, 5),
+            BlockPos(24, 2, 4),
+            BlockPos(23, 3, 4),
+            BlockPos(22, 4, 4),
+            BlockPos(21, 5, 4),
+            BlockPos(20, 6, 4),
+            BlockPos(19, 7, 4),
+            BlockPos(18, 6, 4),
+            BlockPos(17, 5, 4),
+            BlockPos(16, 4, 4),
+            BlockPos(15, 3, 4),
+            BlockPos(15, 2, 3),
         ).forEach(::signal)
 
         return StandardCell(
             "mux2",
             BuiltinCells.mux2,
-            CellSize(26, 8, 9),
+            CellSize(26, 8, 7),
             listOf(
-                CellPin("select", PinDirection.INPUT, BlockPos(0, 1, 8)),
-                CellPin("low", PinDirection.INPUT, BlockPos(7, 1, 8)),
-                CellPin("high", PinDirection.INPUT, BlockPos(22, 1, 8)),
-                CellPin("y", PinDirection.OUTPUT, BlockPos(17, 1, 8), driveStrength = 14),
+                CellPin("select", PinDirection.INPUT, BlockPos(0, 1, 6)),
+                CellPin("low", PinDirection.INPUT, BlockPos(7, 1, 6)),
+                CellPin("high", PinDirection.INPUT, BlockPos(22, 1, 6)),
+                CellPin("y", PinDirection.OUTPUT, BlockPos(17, 1, 6), driveStrength = 15),
             ),
             blocks.entries.map { it.key to it.value },
         )

@@ -160,6 +160,11 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
             ComponentKind.WIRE -> state[Properties.POWER] > 0
             ComponentKind.TORCH, ComponentKind.LAMP -> state[Properties.LIT]
             ComponentKind.REPEATER, ComponentKind.COMPARATOR -> signalAt(pos) > 0
+            ComponentKind.SUBSTRATE -> if (state.type.isSolid && !state.type.isTransparent) {
+                Redstone.redstonePower(world, pos, Direction.UP) > 0
+            } else {
+                throw IllegalArgumentException("${state.type.id} at $pos has no Boolean level")
+            }
             else -> state.getOrNull(Properties.POWERED)
                 ?: throw IllegalArgumentException("${state.type.id} at $pos has no Boolean level")
         }

@@ -120,7 +120,7 @@ class PhysicalCompiler(
     ): Floorplan {
         val placer = connectivityPlacer(netlist, specs)
         val candidates = rowCandidates(specs)
-        val plans = mutableListOf<Floorplan>()
+        val plans = mutableListOf<FloorplanCandidate>()
         progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.PLACEMENT, completed = 0, total = candidates.size, candidateTotal = candidates.size, approximate = true))
         candidates.forEachIndexed { candidateIndex, rows ->
             placer.place(rows).forEach { placement ->
@@ -130,7 +130,12 @@ class PhysicalCompiler(
                 tierCounts(partitions).forEach tierLoop@ { tierCount ->
                     val assignment = tierAssignments(netlist, partitions, tierCount) ?: return@tierLoop
                     try {
-                        plans += floorplan(netlist, partitions, assignment, tierCount)
+                        plans += FloorplanCandidate(
+                            floorplan(netlist, partitions, assignment, tierCount, ViaPolicy.STAIRS),
+                            partitions,
+                            assignment,
+                            tierCount,
+                        )
                     } catch (_: CandidateGeometryException) {
 
                     }
@@ -149,16 +154,42 @@ class PhysicalCompiler(
             )
         }
         require(plans.isNotEmpty()) { "no feasible floorplan for ${specs.size} cells" }
-        return plans.minWith(
-            compareBy<Floorplan> { it.selectionCost }
-                .thenBy { it.routingBlocks }
-                .thenBy { it.maximumDimension }
-                .thenBy { it.area }
-                .thenBy { it.routingRepeaters }
-                .thenBy { it.timingCutCost }
-                .thenBy { it.tierCount },
-        )
+        val selected = plans.minWith(compareByFloorplanCandidate())
+        if (specs.size > UPWARD_GLASS_PLACEMENT_GATE_LIMIT) {
+            val glass = try {
+                floorplan(netlist, selected.partitions, selected.assignment, selected.tierCount, ViaPolicy.UPWARD_GLASS)
+            } catch (_: CandidateGeometryException) {
+                null
+            }
+            return listOfNotNull(selected.plan, glass).minWith(compareFloorplans())
+        }
+        val finalists = mutableListOf(selected.plan)
+        for (candidate in plans.sortedWith(compareByFloorplanCandidate()).take(UPWARD_GLASS_CANDIDATES)) {
+            try {
+                finalists += floorplan(
+                    netlist,
+                    candidate.partitions,
+                    candidate.assignment,
+                    candidate.tierCount,
+                    ViaPolicy.UPWARD_GLASS,
+                )
+            } catch (_: CandidateGeometryException) {
+
+            }
+        }
+        return finalists.minWith(compareFloorplans())
     }
+
+    private fun compareFloorplans(): Comparator<Floorplan> = compareBy<Floorplan> { it.selectionCost }
+        .thenBy { it.routingBlocks }
+        .thenBy { it.maximumDimension }
+        .thenBy { it.area }
+        .thenBy { it.routingRepeaters }
+        .thenBy { it.timingCutCost }
+        .thenBy { it.tierCount }
+
+    private fun compareByFloorplanCandidate(): Comparator<FloorplanCandidate> =
+        Comparator { left, right -> compareFloorplans().compare(left.plan, right.plan) }
 
     private fun splitForcedTierRows(rows: List<List<Int>>, specs: List<CellSpec>): List<List<Int>> = rows.flatMap { row ->
         val forcedTiers = row.mapNotNull { specs[it].forcedTier }.distinct()
@@ -388,6 +419,7 @@ class PhysicalCompiler(
         partitions: List<List<CellSpec>>,
         tierAssignment: IntArray,
         tierCount: Int,
+        viaPolicy: ViaPolicy,
     ): Floorplan {
         require(partitions.size == tierAssignment.size)
         val activeCellHeight = partitions.flatten().maxOf { it.cell.size.y }
@@ -517,43 +549,112 @@ class PhysicalCompiler(
                     }
             }
         }
-        val prepared = rowDrafts.map { draft ->
-            val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
-            val baseViaReach = technology.viaSignalOffsets.maxOf { abs(it.z) }
-            val globalViaReach = abs(viaOffsets(ViaSense.DOWN, laneY, activeGlobalPlaneY).last().z)
-            val endpointViaReach = draft.routes
-                .flatMap { route -> listOf(route.source) + route.sinks }
-                .maxOfOrNull { endpoint ->
-                    when (endpoint) {
-                        is Endpoint.Cell -> if (endpoint.sense == ViaSense.DOWN) {
-                            abs(viaOffsets(endpoint.sense, laneY, endpoint.position.y).last().z)
-                        } else {
-                            baseViaReach
-                        }
-                        is Endpoint.Global -> globalViaReach
-                    }
-                } ?: baseViaReach
-            val laneReach = if (foldRows) globalViaReach else endpointViaReach
-            val laneBase = bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
-            val routes = draft.routes.map { route ->
-                route.placeAt(0, laneY, laneBase + route.lane * technology.lanePitch)
-            }
-            val southExtent = routes.maxOfOrNull { it.southernExtent(globalViaReach) }
-                ?: (bandCellDepths[bands[draft.index]] - 1)
-            val outputPlaneExtent = routes.maxOfOrNull { route ->
-                (listOf(route.source) + route.sinks)
-                    .filterIsInstance<Endpoint.Cell>()
-                    .filter { it.sense == ViaSense.UP }
+        val prepared = if (viaPolicy == ViaPolicy.STAIRS) {
+            rowDrafts.map { draft ->
+                val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
+                val baseViaReach = technology.viaSignalOffsets.maxOf { abs(it.z) }
+                val globalViaReach = abs(
+                    viaOffsets(
+                        ViaSense.DOWN,
+                        laneY,
+                        activeGlobalPlaneY,
+                        ViaFlow.DOWNWARD,
+                        true,
+                        viaPolicy,
+                    ).last().z,
+                )
+                val endpointViaReach = draft.routes
+                    .flatMap { route -> listOf(route.source) + route.sinks }
                     .maxOfOrNull { endpoint ->
-                        route.laneZ + viaOffsets(endpoint.sense, laneY, endpoint.position.y).last().z
-                    } ?: Int.MIN_VALUE
-            } ?: Int.MIN_VALUE
-            PreparedRow(
-                draft,
-                laneY,
-                laneBase,
-                maxOf(southExtent, outputPlaneExtent) + technology.isolation + 1,
-            )
+                        when (endpoint) {
+                            is Endpoint.Cell -> if (endpoint.sense == ViaSense.DOWN) {
+                                abs(
+                                    viaOffsets(
+                                        endpoint.sense,
+                                        laneY,
+                                        endpoint.position.y,
+                                        ViaFlow.DOWNWARD,
+                                        false,
+                                        viaPolicy,
+                                    ).last().z,
+                                )
+                            } else {
+                                baseViaReach
+                            }
+                            is Endpoint.Global -> globalViaReach
+                        }
+                    } ?: baseViaReach
+                val laneReach = if (foldRows) globalViaReach else endpointViaReach
+                val laneBase = bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
+                val routes = draft.routes.map { route ->
+                    route.placeAt(0, laneY, laneBase + route.lane * technology.lanePitch, viaPolicy)
+                }
+                val southExtent = routes.maxOfOrNull { it.southernExtent(globalViaReach) }
+                    ?: (bandCellDepths[bands[draft.index]] - 1)
+                val outputPlaneExtent = routes.maxOfOrNull { route ->
+                    (listOf(route.source) + route.sinks)
+                        .filterIsInstance<Endpoint.Cell>()
+                        .filter { it.sense == ViaSense.UP }
+                        .maxOfOrNull { endpoint ->
+                            route.laneZ + viaOffsets(
+                                endpoint.sense,
+                                laneY,
+                                endpoint.position.y,
+                                ViaFlow.DOWNWARD,
+                                false,
+                                viaPolicy,
+                            ).last().z
+                        } ?: Int.MIN_VALUE
+                } ?: Int.MIN_VALUE
+                PreparedRow(
+                    draft,
+                    laneY,
+                    laneBase,
+                    maxOf(southExtent, outputPlaneExtent) + technology.isolation + 1,
+                )
+            }
+        } else {
+            rowDrafts.map { draft ->
+                val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
+                val laneReach = draft.routes.maxOfOrNull { route ->
+                    maxOf(
+                        viaReach(route.source, laneY, ViaFlow.DOWNWARD, viaPolicy),
+                        route.sinks.maxOfOrNull { viaReach(it, laneY, ViaFlow.UPWARD, viaPolicy) } ?: 0,
+                    )
+                } ?: 0
+                val laneBase = bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
+                val routes = draft.routes.map { route ->
+                    route.placeAt(0, laneY, laneBase + route.lane * technology.lanePitch, viaPolicy)
+                }
+                val southExtent = routes.maxOfOrNull { route ->
+                    maxOf(
+                        route.laneZ + viaOffsets(
+                            route.source.viaSense(),
+                            laneY,
+                            route.source.targetY(),
+                            ViaFlow.DOWNWARD,
+                            route.source is Endpoint.Global,
+                            viaPolicy,
+                        ).maxOf { it.z },
+                        route.sinks.maxOfOrNull { endpoint ->
+                            route.laneZ + viaOffsets(
+                                endpoint.viaSense(),
+                                laneY,
+                                endpoint.targetY(),
+                                ViaFlow.UPWARD,
+                                endpoint is Endpoint.Global,
+                                viaPolicy,
+                            ).maxOf { it.z }
+                        } ?: route.laneZ,
+                    )
+                } ?: (bandCellDepths[bands[draft.index]] - 1)
+                PreparedRow(
+                    draft,
+                    laneY,
+                    laneBase,
+                    southExtent + technology.isolation + 1,
+                )
+            }
         }
         val bandDepths = IntArray(bandCount)
         prepared.forEach { row ->
@@ -571,6 +672,7 @@ class PhysicalCompiler(
                     baseZ,
                     preparedRow.laneY,
                     baseZ + preparedRow.laneBase + route.lane * technology.lanePitch,
+                    viaPolicy,
                 )
             }
             val translatedCells = preparedRow.draft.cells.map { cell ->
@@ -1201,16 +1303,25 @@ class PhysicalCompiler(
             }
             require(starts.isNotEmpty()) { "global track for signal ${track.signal.index} has no handoff" }
             require(taps.isNotEmpty()) { "global track for signal ${track.signal.index} has no tap" }
+            require(segments.all { it.viaPolicy == source.viaPolicy }) { "global track mixes via policies" }
             GlobalRun(
                 track.signal,
                 track,
                 starts.sortedWith(compareBy<GlobalStart>({ it.z }, { it.sense.ordinal })),
                 taps.sortedBy { it.z },
+                source.viaPolicy,
             )
         }
 
     private fun globalTapZ(route: LocalRoute, endpoint: Endpoint.Global): Int =
-        route.laneZ + viaOffsets(endpoint.sense, route.laneY, endpoint.track.planeY).last().z
+        route.laneZ + viaOffsets(
+            endpoint.sense,
+            route.laneY,
+            endpoint.track.planeY,
+            if (route.source == endpoint) ViaFlow.DOWNWARD else ViaFlow.UPWARD,
+            true,
+            route.viaPolicy,
+        ).last().z
 
     private fun routingCost(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>): RoutingCost =
         CountingSink().also { route(rows, globalTracks, it) }.let { RoutingCost(it.repeaters, it.blocks) }
@@ -1303,7 +1414,7 @@ class PhysicalCompiler(
             run.track.trunkX,
             tap.viaX,
             trunkDecay,
-            globalViaDescent(run.track, tap.laneY),
+            globalViaDescent(run.track, tap.laneY, ViaFlow.DOWNWARD, run.viaPolicy),
         )
         val key = TapKey(run.track, tap.laneY, tap.laneZ)
         log.tapDecay[key] = connector.decay
@@ -1340,7 +1451,7 @@ class PhysicalCompiler(
             initialDecay = initialDecay,
             protectedPositions = protected,
             viaReserve = taps.maxOf {
-                abs(it.viaX - run.track.trunkX) + globalViaDescent(run.track, it.laneY)
+                abs(it.viaX - run.track.trunkX) + globalViaDescent(run.track, it.laneY, ViaFlow.DOWNWARD, run.viaPolicy)
             },
         ) { z, decay, repeater ->
             if (repeater) repeaters++
@@ -1371,7 +1482,14 @@ class PhysicalCompiler(
             if (arm.isEmpty()) return@forEach
             val viaColumns = arm.toSet() + sourceX
             val viaReserve = (listOf(source) + sinks.filter { it.x in viaColumns })
-                .maxOf { endpoint -> endpointLaneReserve(endpoint, laneY) }
+                .maxOf { endpoint ->
+                    endpointLaneReserve(
+                        endpoint,
+                        laneY,
+                        if (endpoint == source) ViaFlow.DOWNWARD else ViaFlow.UPWARD,
+                        viaPolicy,
+                    )
+                }
             var armRepeaters = 0
             placeXRun(
                 sink,
@@ -1408,9 +1526,16 @@ class PhysicalCompiler(
 
     private fun LocalRoute.placeSourceEndpoint(sink: RouteSink, inboundDecay: Int): Carried = when (source) {
         is Endpoint.Cell -> {
-            val descent = endpointViaDescent(source, laneY)
-            placeVia(sink, source.x, laneY, laneZ, source.sense, signal, source.position.y)
-            val accessZ = laneZ + viaOffsets(source.sense, laneY, source.position.y).last().z
+            val descent = endpointViaDescent(source, laneY, ViaFlow.DOWNWARD, viaPolicy)
+            placeVia(sink, source.x, laneY, laneZ, source.sense, signal, source.position.y, ViaFlow.DOWNWARD, false, viaPolicy)
+            val accessZ = laneZ + viaOffsets(
+                source.sense,
+                laneY,
+                source.position.y,
+                ViaFlow.DOWNWARD,
+                false,
+                viaPolicy,
+            ).last().z
             val branch = routeUpperBranch(
                 sink,
                 source.position,
@@ -1427,17 +1552,35 @@ class PhysicalCompiler(
         }
 
         is Endpoint.Global -> {
-            placeVia(sink, source.x, laneY, laneZ, source.sense, signal, source.track.planeY)
-            Carried(inboundDecay + globalViaDescent(source.track, laneY), 0)
+            placeVia(sink, source.x, laneY, laneZ, source.sense, signal, source.track.planeY, ViaFlow.DOWNWARD, true, viaPolicy)
+            Carried(inboundDecay + globalViaDescent(source.track, laneY, ViaFlow.DOWNWARD, viaPolicy), 0)
         }
     }
 
     private fun LocalRoute.placeSinkEndpoint(sink: RouteSink, endpoint: Endpoint, laneDecay: Int): Carried =
         when (endpoint) {
             is Endpoint.Cell -> {
-                val descent = endpointViaDescent(endpoint, laneY)
-                placeVia(sink, endpoint.x, laneY, laneZ, endpoint.sense, signal, endpoint.position.y)
-                val accessZ = laneZ + viaOffsets(endpoint.sense, laneY, endpoint.position.y).last().z
+                val descent = endpointViaDescent(endpoint, laneY, ViaFlow.UPWARD, viaPolicy)
+                placeVia(
+                    sink,
+                    endpoint.x,
+                    laneY,
+                    laneZ,
+                    endpoint.sense,
+                    signal,
+                    endpoint.position.y,
+                    ViaFlow.UPWARD,
+                    false,
+                    viaPolicy,
+                )
+                val accessZ = laneZ + viaOffsets(
+                    endpoint.sense,
+                    laneY,
+                    endpoint.position.y,
+                    ViaFlow.UPWARD,
+                    false,
+                    viaPolicy,
+                ).last().z
                 routeUpperBranch(
                     sink,
                     endpoint.position,
@@ -1453,8 +1596,19 @@ class PhysicalCompiler(
             }
 
             is Endpoint.Global -> {
-                placeVia(sink, endpoint.x, laneY, laneZ, endpoint.sense, signal, endpoint.track.planeY)
-                Carried(laneDecay + globalViaDescent(endpoint.track, laneY), 0)
+                placeVia(
+                    sink,
+                    endpoint.x,
+                    laneY,
+                    laneZ,
+                    endpoint.sense,
+                    signal,
+                    endpoint.track.planeY,
+                    ViaFlow.UPWARD,
+                    true,
+                    viaPolicy,
+                )
+                Carried(laneDecay + globalViaDescent(endpoint.track, laneY, ViaFlow.UPWARD, viaPolicy), 0)
             }
         }
 
@@ -1568,15 +1722,25 @@ class PhysicalCompiler(
 
     private val baseViaDescent: Int get() = technology.viaSignalOffsets.size - 1
 
-    private fun globalViaDescent(track: GlobalTrack, laneY: Int): Int =
-        viaOffsets(ViaSense.DOWN, laneY, track.planeY).size - 1
+    private fun globalViaDescent(track: GlobalTrack, laneY: Int, flow: ViaFlow, viaPolicy: ViaPolicy): Int =
+        viaOffsets(ViaSense.DOWN, laneY, track.planeY, flow, true, viaPolicy).size - 1
 
-    private fun endpointViaDescent(endpoint: Endpoint, laneY: Int): Int = when (endpoint) {
-        is Endpoint.Cell -> viaOffsets(endpoint.sense, laneY, endpoint.position.y).size - 1
-        is Endpoint.Global -> globalViaDescent(endpoint.track, laneY)
+    private fun endpointViaDescent(
+        endpoint: Endpoint,
+        laneY: Int,
+        flow: ViaFlow,
+        viaPolicy: ViaPolicy,
+    ): Int = when (endpoint) {
+        is Endpoint.Cell -> viaOffsets(endpoint.sense, laneY, endpoint.position.y, flow, false, viaPolicy).size - 1
+        is Endpoint.Global -> globalViaDescent(endpoint.track, laneY, flow, viaPolicy)
     }
 
-    private fun endpointLaneReserve(endpoint: Endpoint, laneY: Int): Int = endpointViaDescent(endpoint, laneY) +
+    private fun endpointLaneReserve(
+        endpoint: Endpoint,
+        laneY: Int,
+        flow: ViaFlow,
+        viaPolicy: ViaPolicy,
+    ): Int = endpointViaDescent(endpoint, laneY, flow, viaPolicy) +
         if (endpoint is Endpoint.Cell) kotlin.math.abs(endpoint.branchOffsetX) else 0
 
     private fun placeVia(
@@ -1587,16 +1751,37 @@ class PhysicalCompiler(
         sense: ViaSense,
         signal: Signal,
         targetY: Int,
+        flow: ViaFlow,
+        global: Boolean,
+        viaPolicy: ViaPolicy,
     ) {
         val origin = BlockPos(x, laneY, laneZ)
-        viaOffsets(sense, laneY, targetY).forEach { offset ->
-            sink.place(origin + offset, technology.wire, technology.viaSupport, signal)
+        val support = if (!global && usesGlassTower(laneY, targetY, flow, viaPolicy)) {
+            technology.routeSupport
+        } else {
+            technology.viaSupport
+        }
+        viaOffsets(sense, laneY, targetY, flow, global, viaPolicy).forEach { offset ->
+            sink.place(origin + offset, technology.wire, support, signal)
         }
     }
 
-    private fun viaOffsets(sense: ViaSense, laneY: Int, targetY: Int): List<BlockPos> {
+    private fun viaOffsets(
+        sense: ViaSense,
+        laneY: Int,
+        targetY: Int,
+        flow: ViaFlow,
+        global: Boolean,
+        viaPolicy: ViaPolicy,
+    ): List<BlockPos> {
         val baseRise = technology.viaSignalOffsets.last().y
         require(targetY - laneY >= baseRise) { "cannot route from lane Y=$laneY to target Y=$targetY" }
+        if (!global && usesGlassTower(laneY, targetY, flow, viaPolicy)) {
+            val direction = if (sense == ViaSense.DOWN) -1 else 1
+            return (0..targetY - laneY).map { step ->
+                BlockPos(0, step, if (step % 2 == 0) 0 else direction)
+            }
+        }
         val base = technology.viaSignalOffsets
         val last = base.last()
         val extra = targetY - laneY - baseRise
@@ -1608,6 +1793,39 @@ class PhysicalCompiler(
             ViaSense.UP -> down.map { BlockPos(it.x, it.y, -it.z) }
         }
     }
+
+    private fun usesGlassTower(
+        laneY: Int,
+        targetY: Int,
+        flow: ViaFlow,
+        viaPolicy: ViaPolicy,
+    ): Boolean = viaPolicy == ViaPolicy.UPWARD_GLASS &&
+        flow == ViaFlow.UPWARD &&
+        targetY - laneY > technology.viaSignalOffsets.last().y
+
+    private fun Endpoint.targetY(): Int = when (this) {
+        is Endpoint.Cell -> position.y
+        is Endpoint.Global -> track.planeY
+    }
+
+    private fun Endpoint.viaSense(): ViaSense = when (this) {
+        is Endpoint.Cell -> sense
+        is Endpoint.Global -> sense
+    }
+
+    private fun viaReach(
+        endpoint: Endpoint,
+        laneY: Int,
+        flow: ViaFlow,
+        viaPolicy: ViaPolicy,
+    ): Int = viaOffsets(
+        endpoint.viaSense(),
+        laneY,
+        endpoint.targetY(),
+        flow,
+        endpoint is Endpoint.Global,
+        viaPolicy,
+    ).maxOf { abs(it.z) }
 
     private inline fun placeXRun(
         sink: RouteSink,
@@ -1715,12 +1933,21 @@ class PhysicalCompiler(
 
     private class CountingSink : RouteSink {
         private val owners = HashMap<BlockPos, Signal>()
+        private val supports = HashMap<BlockPos, BlockState>()
         var repeaters: Long = 0
             private set
         var blocks: Long = 0
             private set
 
         override fun place(pos: BlockPos, state: BlockState, support: BlockState, signal: Signal) {
+            if (pos in supports) {
+                throw CandidateGeometryException("signal ${signal.index} crosses route support at $pos")
+            }
+            val supportPos = pos.offset(Direction.DOWN)
+            if (supportPos in owners) {
+                throw CandidateGeometryException("signal ${signal.index} needs support through routed wire at $supportPos")
+            }
+            supports.putIfAbsent(supportPos, support)
             val previous = owners.putIfAbsent(pos, signal)
             if (previous != null) {
                 if (previous != signal) {
@@ -1829,6 +2056,8 @@ class PhysicalCompiler(
     }
 
     private enum class ViaSense { UP, DOWN }
+    private enum class ViaFlow { UPWARD, DOWNWARD }
+    private enum class ViaPolicy { STAIRS, UPWARD_GLASS }
 
     private data class LocalRouteDraft(
         val signal: Signal,
@@ -1858,7 +2087,7 @@ class PhysicalCompiler(
             return Abutment(signal, minimumX + 1..maximumX - 1, source.position.y, source.position.z, sink.x)
         }
 
-        fun placeAt(rowZ: Int, laneY: Int, laneZ: Int): LocalRoute = LocalRoute(
+        fun placeAt(rowZ: Int, laneY: Int, laneZ: Int, viaPolicy: ViaPolicy): LocalRoute = LocalRoute(
             signal,
             row,
             source.translate(rowZ),
@@ -1866,6 +2095,7 @@ class PhysicalCompiler(
             lane,
             laneY,
             laneZ,
+            viaPolicy,
         )
 
         private fun Endpoint.translate(z: Int): Endpoint = when (this) {
@@ -1882,8 +2112,8 @@ class PhysicalCompiler(
         val lane: Int,
         val laneY: Int,
         val laneZ: Int,
+        val viaPolicy: ViaPolicy,
     ) {
-
         fun southernExtent(viaReach: Int): Int {
             val endpoints = listOf(source) + sinks
             return laneZ + if (endpoints.any { it is Endpoint.Global && it.sense == ViaSense.UP }) viaReach else 0
@@ -1972,9 +2202,17 @@ class PhysicalCompiler(
         val track: GlobalTrack,
         val starts: List<GlobalStart>,
         val taps: List<GlobalTap>,
+        val viaPolicy: ViaPolicy,
     )
 
     private data class RoutingCost(val repeaters: Long, val blocks: Long)
+
+    private data class FloorplanCandidate(
+        val plan: Floorplan,
+        val partitions: List<List<CellSpec>>,
+        val assignment: IntArray,
+        val tierCount: Int,
+    )
 
     private data class Floorplan(
         val rows: List<PlacedRow>,
@@ -2009,6 +2247,8 @@ class PhysicalCompiler(
         const val TIER_VERTICAL_SPAN_COST = 12
         const val TIER_NEAR_WEIGHT = 8
         const val EDGE_CELL_MARGIN = 4
+        const val UPWARD_GLASS_CANDIDATES = 3
+        const val UPWARD_GLASS_PLACEMENT_GATE_LIMIT = 128
         const val ROUTING_SELECTION_WEIGHT = 100L
         const val MAX_DIMENSION_SELECTION_WEIGHT = 600L
         const val AREA_SELECTION_WEIGHT = 5L

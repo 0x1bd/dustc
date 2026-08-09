@@ -132,6 +132,32 @@ class PhysicalCompilerTest {
     }
 
     @Test
+    fun `deep upward routes can use glass towers`() {
+        val circuit = DustLanguage.compile(
+            """
+            module tower(input a: bit, input b: bit, output y: bit) {
+                #[tier(2)]
+                let p = a ^ b
+                y = p
+            }
+            """.trimIndent(),
+            "tower.dust",
+        ).single()
+        val design = PhysicalCompiler().compile(circuit.lowerToBooleanNetlist())
+        val glassSteps = design.routes.sumOf { route ->
+            route.routeBlocks.sumOf { pos ->
+                listOf(-1, 1).count { dz ->
+                    val above = org.kvxd.dust.device.BlockPos(pos.x, pos.y + 1, pos.z + dz)
+                    above in route.routeBlocks &&
+                        design.matrix.blockAt(pos.offset(org.kvxd.dust.device.Direction.DOWN)).type.isTransparent &&
+                        design.matrix.blockAt(above.offset(org.kvxd.dust.device.Direction.DOWN)).type.isTransparent
+                }
+            }
+        }
+        assertTrue(glassSteps > 0)
+    }
+
+    @Test
     fun `mixed hard tiers split incompatible placement rows`() {
         val circuit = DustLanguage.compile(
             """
