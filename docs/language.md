@@ -1,186 +1,498 @@
-# dustc
+# Dust language
 
-`dustc` compiles the [Dust hardware language](docs/language.md) into placed and routed Minecraft redstone and writes the result as a Sponge `.schem` file.
+Dust is a small hardware description language for building Boolean circuits that `dustc` can place and route as Minecraft redstone.
 
-```text
-Dust source -> Boolean netlist -> standard-cell placement -> redstone routing -> .schem
-```
-
-## Install dustc
-
-### Prebuilt binary
-
-The easiest way to use dustc is to download a binary from the [GitHub releases](https://github.com/0x1bd/dustc/releases).
-
-Prebuilt binaries are published for:
-
-- Linux x86_64
-- Linux aarch64
-- macOS Apple Silicon
-- Windows x86_64
-
-On Linux or macOS, make the downloaded file executable and optionally put it on your `PATH`:
-
-```shell
-chmod +x dustc-linux-x86_64
-mv dustc-linux-x86_64 ~/.local/bin/dustc
-```
-
-Then verify the installation:
-
-```shell
-dustc --version
-```
-
-You can also keep the executable in the repository or another working directory and invoke it as `./dustc`.
-
-## Build from source with Gradle
-
-The project targets Java 21. Clone the repository and use the included Gradle wrapper:
-
-```shell
-git clone https://github.com/0x1bd/dustc.git
-cd dustc
-./gradlew build
-```
-
-`build` compiles dustc and runs the test suite.
-
-To run the JVM version directly through Gradle:
-
-```shell
-./gradlew run --args='build examples/adder4.dust -o adder4.schem'
-```
-
-To create an installable JVM distribution:
-
-```shell
-./gradlew installDist
-```
-
-The launcher will be written to:
-
-```text
-build/install/dustc/bin/dustc
-```
-
-### Native executable
-
-The standalone release binary is built with GraalVM Native Image. Install a GraalVM JDK with `native-image`, then run:
-
-```shell
-./gradlew nativeCompile
-```
-
-The resulting executable is:
-
-```text
-build/native/nativeCompile/dustc
-```
-
-Or build it and copy it to the repository root in one step:
-
-```shell
-./gradlew installNative
-./dustc --version
-```
-
-On Windows the executable has the usual `.exe` suffix.
-
-## Quick start
-
-Compile the included 4-bit adder:
-
-```shell
-dustc build examples/adder4.dust -o adder4.schem
-```
-
-By default, physical builds expose inputs as levers and outputs as lamps. For raw redstone terminals instead:
-
-```shell
-dustc build examples/adder4.dust -o adder4.schem --terminals
-```
-
-If a source file contains several modules, choose the top-level module explicitly:
-
-```shell
-dustc build design.dust -o design.schem --module cpu
-```
-
-For all CLI options:
-
-```shell
-dustc --help
-```
-
-## VS Code / VSCodium
-
-The extension in [`editors/vscode`](editors/vscode) adds:
-
-- Dust syntax highlighting
-- snippets for the language and placement attributes
-- `Dust: Build Schematic`
-- inline compiler errors
-- live physical-compilation progress
-- automatic downloading of stable or nightly dustc binaries
-
-Tagged releases include `dust-vscode.vsix`. Install it from the command line with either VS Code or VSCodium:
-
-```shell
-code --install-extension dust-vscode.vsix
-```
-
-```shell
-codium --install-extension dust-vscode.vsix
-```
-
-You can also use **Extensions -> ... -> Install from VSIX...**.
-
-After installing the extension, open the command palette and run:
-
-```text
-Dust: Download Latest dustc
-```
-
-The extension stores the downloaded compiler itself. If you already built dustc locally, no download is required: when `dust.compilerPath` is empty, the extension searches in this order:
-
-1. the compiler downloaded by the extension
-2. `dustc` in the workspace root
-3. `dustc` on `PATH`
-
-To use a specific executable, set `dust.compilerPath` in VS Code settings.
-
-For example:
-
-```json
-{
-    "dust.compilerPath": "/home/me/src/dustc/dustc",
-    "dust.buildArguments": ["--terminals"]
-}
-```
-
-To build the VS Code extension itself:
-
-```shell
-cd editors/vscode
-npx @vscode/vsce package
-```
-
-This produces a `.vsix` that can be installed with the commands above.
-
-## Language
-
-A small Dust module looks like this:
+## A first module
 
 ```dust
 module inverter(
-    input controls { a: bit },
-    output result { y: bit },
+    input controls {
+        a: bit,
+    },
+    output result {
+        y: bit,
+    },
 ) {
     y = ~a
 }
 ```
 
-Dust supports buses, Boolean operators, compile-time loops, local bindings, module composition, multiplexers, latches, and physical placement attributes such as `#[near(...)]`, `#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
+Every module has a name, a list of inputs and outputs, and a body. A file may contain multiple modules.
 
-See the [language reference](docs/language.md) for the complete syntax and semantics.
+Module, port, and I/O-group names use lower-case letters, digits, and `_`, and must start with a letter.
+
+## Signals and buses
+
+A `bit` is one Boolean signal:
+
+```dust
+input enable: bit
+output active: bit
+```
+
+A `bits<N>` value is a bus containing `N` signals:
+
+```dust
+input value: bits<8>
+output result: bits<16>
+```
+
+Bus widths are between 1 and 64 bits. Bit 0 is the least-significant bit when a bus is interpreted as an integer.
+
+Index a bus with `[]`:
+
+```dust
+let low_bit = value[0]
+result[3] = value[5]
+```
+
+Indices must be compile-time integers. Dust does not currently have slices such as `value[0..4]`.
+
+## I/O groups
+
+Related ports can be collected into named groups:
+
+```dust
+module adder(
+    input operands {
+        a: bits<4>,
+        b: bits<4>,
+        cin: bit,
+    },
+    output result {
+        sum: bits<4>,
+        cout: bit,
+    },
+) {
+    // ...
+}
+```
+
+Groups are primarily interface and placement metadata. They do **not** create a value that can be read from expressions, and grouping ports by itself does not force them into a physical strip or panel.
+
+A group name can, however, be referenced by placement attributes such as `#[near(operands)]`.
+
+## Logic expressions
+
+Dust has four primitive Boolean operators:
+
+```dust
+~a
+!a
+
+a & b
+a and b
+
+a ^ b
+
+a | b
+a or b
+```
+
+`~` and `!` are NOT, `&`/`and` are AND, `^` is XOR, and `|`/`or` are OR.
+
+Precedence from highest to lowest is:
+
+```text
+~ !
+& and
+^
+| or
+```
+
+Use parentheses whenever the intended grouping is not obvious:
+
+```dust
+let carry = (a & b) | (p & cin)
+```
+
+Operators work element-by-element on equal-width buses as well as single bits:
+
+```dust
+module xor8(
+    input a: bits<8>,
+    input b: bits<8>,
+    output y: bits<8>,
+) {
+    y = a ^ b
+}
+```
+
+The two operands of a binary gate must have the same width.
+
+## Local values
+
+Use `let` to name an intermediate value:
+
+```dust
+let p = a ^ b
+let carry = (a & b) | (p & cin)
+```
+
+A normal `let` binding is immutable.
+
+`let mut` creates a binding that may be rebound while the compiler elaborates the module:
+
+```dust
+let mut carry = cin
+carry = next_carry
+```
+
+This is useful for constructing chains in loops, but it is important that `let mut` **does not create storage hardware**. It only changes which compile-time value the name refers to. Use `latch()` when the circuit actually needs state.
+
+Mutable buses can also be changed one bit at a time:
+
+```dust
+let mut value = a
+value[2] = b
+```
+
+## Outputs
+
+Assign outputs directly:
+
+```dust
+y = a ^ b
+sum[0] = p
+```
+
+Every output bit must be assigned exactly once. Dust rejects missing assignments and multiple assignments to the same output bit.
+
+Outputs cannot currently be read back while a module is being built. If a result is needed again, give the expression a local name first:
+
+```dust
+let p = a ^ b
+sum = p
+carry = p & cin
+```
+
+## Compile-time integers
+
+Integer values exist only while elaborating the circuit. They are used for things such as loop bounds and bus indices; they are not wires and cannot be connected to gates.
+
+Dust accepts decimal, hexadecimal, and binary integer literals, with optional `_` separators:
+
+```dust
+0
+12
+0xff
+0b1010
+1_000
+```
+
+For example:
+
+```dust
+let index = 3
+out = bus[index]
+```
+
+There are currently no integer arithmetic operators. Loop indices and literal integer bindings are the main sources of compile-time integers.
+
+## Loops
+
+`for` loops generate repeated hardware at compile time:
+
+```dust
+for i in 0..8 {
+    y[i] = a[i] ^ b[i]
+}
+```
+
+`0..8` produces `0` through `7`. An inclusive range can be written as:
+
+```dust
+for i in 0..=7 {
+    // i is 0 through 7
+}
+```
+
+Ranges must count upward and both bounds must be known at compile time.
+
+The loop body is elaborated once for every value of the loop index. It is not a runtime loop in the generated redstone.
+
+A ripple-carry adder is a good example:
+
+```dust
+let mut carry = cin
+for i in 0..4 {
+    let p = a[i] ^ b[i]
+    sum[i] = p ^ carry
+    carry = (a[i] & b[i]) | (p & carry)
+}
+cout = carry
+```
+
+## Built-in hardware
+
+### Multiplexer
+
+`mux(select, low, high)` selects between two equal-width values:
+
+```dust
+y = mux(select, a, b)
+```
+
+When `select` is 0, the result is `low`. When it is 1, the result is `high`.
+
+`select` must be one bit. `low` and `high` may be either bits or buses, but they must have the same width.
+
+```dust
+module mux8(
+    input select: bit,
+    input low: bits<8>,
+    input high: bits<8>,
+    output y: bits<8>,
+) {
+    y = mux(select, low, high)
+}
+```
+
+### Latch
+
+`latch(data, hold)` creates one bit of state:
+
+```dust
+stored = latch(data, hold)
+```
+
+Both arguments are one bit. When `hold` is 0, the latch follows `data`. When `hold` is 1, it keeps its previous value.
+
+Unlike `let mut`, this creates actual stateful hardware.
+
+## Calling modules
+
+Modules can be composed by calling them like functions:
+
+```dust
+module half_adder(
+    input a: bit,
+    input b: bit,
+    output sum: bit,
+    output carry: bit,
+) {
+    sum = a ^ b
+    carry = a & b
+}
+
+module full_adder(
+    input a: bit,
+    input b: bit,
+    input cin: bit,
+    output sum: bit,
+    output cout: bit,
+) {
+    let first = half_adder(a, b)
+    let second = half_adder(first.sum, cin)
+
+    sum = second.sum
+    cout = first.carry | second.carry
+}
+```
+
+Arguments are positional and correspond to the called module's input ports in declaration order.
+
+A module call returns an output bundle. Read individual outputs with `.name`, such as `first.sum` or `first.carry`.
+
+Called modules are flattened into the caller. Dust does not preserve a separate physical module instance. Recursive module calls are not allowed. Modules may appear in any order in the file.
+
+Placement attributes attached to a module's top-level I/O apply when that module itself is compiled as the top level. They are not propagated through a nested module call.
+
+## Physical placement attributes
+
+Dust normally chooses placement automatically. Attributes let a design provide useful physical constraints or hints without describing exact Minecraft coordinates.
+
+Attributes do not change the logical behavior of the circuit.
+
+### `#[panel]`
+
+`#[panel]` turns a named top-level I/O group into a compact physical interface:
+
+```dust
+module adder4(
+    #[panel]
+    input operands {
+        a: bits<4>,
+        b: bits<4>,
+        cin: bit,
+    },
+    #[panel]
+    output result {
+        sum: bits<4>,
+        cout: bit,
+    },
+) {
+    // ...
+}
+```
+
+Without `#[panel]`, the ports are still grouped logically, but the physical compiler remains free to place them independently.
+
+A panel must be a named top-level I/O group. The compiler currently supports panels on the north or south edge. If no `#[edge]` is given, the compiler chooses the panel edge automatically.
+
+### `#[edge(...)]`
+
+`#[edge]` constrains top-level I/O to a specific side of the physical design:
+
+```dust
+#[edge(north)] input controls { enable: bit },
+#[edge(south)] output result { ready: bit },
+```
+
+The valid directions are:
+
+```text
+north
+south
+east
+west
+```
+
+`#[edge]` may be attached to an individual top-level port or to a group.
+
+A `#[panel]` can currently only use `north` or `south`.
+
+### `#[near(...)]`
+
+`#[near]` tells the placer that a value should preferably stay physically close to one or more other signals or groups:
+
+```dust
+#[near(operands)]
+let p = a ^ b
+```
+
+Multiple targets can be given:
+
+```dust
+#[near(a, b)]
+let p = a ^ b
+```
+
+For an internal `let`, targets can be existing local values, input ports, or named input groups. On a top-level port, targets may also include outputs and output groups because placement is applied after the module has been elaborated:
+
+```dust
+module example(
+    input controls { enable: bit },
+    #[near(controls)] output ready: bit,
+) {
+    ready = ~enable
+}
+```
+
+`#[near]` is an affinity hint. It influences placement cost but does not promise adjacency or a particular coordinate.
+
+### `#[tier(...)]`
+
+`#[tier]` forces a signal onto a physical routing/placement tier:
+
+```dust
+#[tier(1)]
+let p = a ^ b
+```
+
+Tiers are numbered from 0. The argument must be a non-negative compile-time integer literal.
+
+It can also constrain top-level I/O:
+
+```dust
+#[tier(0)] input a: bit,
+```
+
+Use explicit tiers only when the physical structure matters. Unannotated logic is normally better left to the placer.
+
+### Combining attributes
+
+Attributes can be stacked:
+
+```dust
+#[panel]
+#[edge(north)]
+input controls {
+    enable: bit,
+    reset: bit,
+},
+```
+
+Internal placement attributes are attached to immutable `let` bindings:
+
+```dust
+#[tier(1)]
+#[near(operands)]
+let p = a ^ b
+```
+
+`#[edge]` and `#[panel]` are only valid for top-level I/O. Placement attributes cannot be attached to `let mut` bindings.
+
+## Blocks and scope
+
+Braces create a nested scope:
+
+```dust
+{
+    let temporary = a ^ b
+    y = temporary
+}
+```
+
+Bindings declared inside a block are not available outside it.
+
+Loop bodies also get their own scope, with the loop index defined inside that scope.
+
+Dust does not use semicolons. Statements are separated by their syntax and may be formatted across lines however is most readable.
+
+## Comments
+
+Line comments start with `//`:
+
+```dust
+// one line
+let p = a ^ b
+```
+
+Block comments use `/* ... */`:
+
+```dust
+/*
+   multiple lines
+*/
+```
+
+Block comments may be nested.
+
+## Complete example
+
+```dust
+module adder4(
+    #[panel]
+    input operands {
+        a: bits<4>,
+        b: bits<4>,
+        cin: bit,
+    },
+    #[panel]
+    output result {
+        sum: bits<4>,
+        cout: bit,
+    },
+) {
+    let mut carry = cin
+
+    for i in 0..4 {
+        let p = a[i] ^ b[i]
+        sum[i] = p ^ carry
+        carry = (a[i] & b[i]) | (p & carry)
+    }
+
+    cout = carry
+}
+```
+
+The loop is unrolled into four stages. Each Boolean operator becomes primitive logic, the output assignments become module outputs, and the placement attributes tell the physical compiler to arrange both I/O groups as compact panels.
+
+More examples are available in the [examples](../examples) directory.
+
+## Current language boundaries
+
+Dust is intentionally small. In particular, it currently has no signal constants, arithmetic operators, conditionals, bus slices, runtime loops, recursive modules, or user-defined types.
+
+Certain features will likely be added in the future.
