@@ -352,6 +352,10 @@ class PhysicalCompilerTest {
             assertTrue(BlockPos(pin.x, pin.y, branchZ) in route.routeBlocks, cell.name)
             assertTrue(BlockPos(pin.x - 1, pin.y, branchZ) !in route.routeBlocks, cell.name)
             assertTrue(BlockPos(pin.x + 1, pin.y, branchZ) !in route.routeBlocks, cell.name)
+            val branchZs = route.routeBlocks.filter { it.x == pin.x && it.y == pin.y }.map { it.z }.toSet()
+            val branchRange = checkNotNull(branchZs.minOrNull())..checkNotNull(branchZs.maxOrNull())
+            assertTrue(branchRange.all { it in branchZs }, cell.name)
+            assertTrue(route.routeBlocks.none { it.y == pin.y && it.x != pin.x && it.z in branchRange }, cell.name)
         }
 
         val simulator = GateLevelSimulator(design.matrix)

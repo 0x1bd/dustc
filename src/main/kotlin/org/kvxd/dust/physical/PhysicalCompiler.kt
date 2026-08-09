@@ -1609,7 +1609,7 @@ class PhysicalCompiler(
                     endpoint.position,
                     accessZ,
                     endpoint.sense,
-                    endpoint.branchOffsetX,
+                    if (usesGlassTower(laneY, endpoint.position.y, ViaFlow.UPWARD, viaPolicy)) 0 else endpoint.branchOffsetX,
                     Direction.NORTH,
                     signal,
                     laneDecay + descent,
