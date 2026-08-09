@@ -135,6 +135,7 @@ class PhysicalCompiler(
     ): FloorplanSelection {
         val placer = connectivityPlacer(netlist, specs)
         val candidates = rowCandidates(specs)
+        val reserveIoSigns = io == PhysicalIo.DEBUG_PADS && layout != null
         val plans = mutableListOf<FloorplanCandidate>()
         progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.PLACEMENT, completed = 0, total = candidates.size, candidateTotal = candidates.size, approximate = true))
         candidates.forEachIndexed { candidateIndex, rows ->
@@ -146,7 +147,7 @@ class PhysicalCompiler(
                     val assignment = tierAssignments(netlist, partitions, tierCount) ?: return@tierLoop
                     try {
                         plans += FloorplanCandidate(
-                            floorplan(netlist, partitions, assignment, tierCount, ViaPolicy.STAIRS),
+                            floorplan(netlist, partitions, assignment, tierCount, ViaPolicy.STAIRS, reserveIoSigns),
                             partitions,
                             assignment,
                             tierCount,
@@ -173,7 +174,7 @@ class PhysicalCompiler(
         val selected = plans.minWith(compareByFloorplanCandidate())
         if (specs.size > UPWARD_GLASS_PLACEMENT_GATE_LIMIT) {
             val glass = try {
-                floorplan(netlist, selected.partitions, selected.assignment, selected.tierCount, ViaPolicy.UPWARD_GLASS)
+                floorplan(netlist, selected.partitions, selected.assignment, selected.tierCount, ViaPolicy.UPWARD_GLASS, reserveIoSigns)
             } catch (_: CandidateGeometryException) {
                 null
             }
@@ -193,6 +194,7 @@ class PhysicalCompiler(
                         candidate.assignment,
                         candidate.tierCount,
                         ViaPolicy.UPWARD_GLASS,
+                        reserveIoSigns,
                     ),
                 )
             } catch (_: CandidateGeometryException) {
@@ -276,9 +278,9 @@ class PhysicalCompiler(
                 val minTier = touched.minOf { assignment[it] }
                 val maxTier = touched.maxOf { assignment[it] }
                 total += criticality[index].toLong() * (
-                    (maxBand - minBand) * TIER_BAND_SPAN_COST +
-                        (maxTier - minTier) * TIER_VERTICAL_SPAN_COST
-                    )
+                        (maxBand - minBand) * TIER_BAND_SPAN_COST +
+                                (maxTier - minTier) * TIER_VERTICAL_SPAN_COST
+                        )
             }
             rows.forEachIndexed { row, rowSpecs ->
                 rowSpecs.forEach { spec ->
@@ -287,7 +289,7 @@ class PhysicalCompiler(
                         if (targets.isEmpty()) return@nearLoop
                         val distance = targets.minOf { other ->
                             abs(bands[row] - bands[other]) * TIER_BAND_SPAN_COST +
-                                abs(assignment[row] - assignment[other]) * TIER_VERTICAL_SPAN_COST
+                                    abs(assignment[row] - assignment[other]) * TIER_VERTICAL_SPAN_COST
                         }
                         total += distance.toLong() * TIER_NEAR_WEIGHT
                     }
@@ -443,6 +445,7 @@ class PhysicalCompiler(
         tierAssignment: IntArray,
         tierCount: Int,
         viaPolicy: ViaPolicy,
+        reserveIoSigns: Boolean,
     ): Floorplan {
         require(partitions.size == tierAssignment.size)
         val activeCellHeight = partitions.flatten().maxOf { it.cell.size.y }
@@ -684,9 +687,18 @@ class PhysicalCompiler(
             val band = bands[row.draft.index]
             bandDepths[band] = maxOf(bandDepths[band], row.depth)
         }
+        val bandSignMargins = IntArray(bandCount)
+        if (reserveIoSigns) {
+            rowDrafts.forEach { draft ->
+                if (draft.cells.any { it.cell.name == "input-pad" || it.cell.name == "output-pad" }) {
+                    bandSignMargins[bands[draft.index]] = 1
+                }
+            }
+        }
         val bandStarts = IntArray(bandCount)
+        if (bandCount > 0) bandStarts[0] = bandSignMargins[0]
         for (band in 1 until bandCount) {
-            bandStarts[band] = bandStarts[band - 1] + bandDepths[band - 1]
+            bandStarts[band] = bandStarts[band - 1] + bandDepths[band - 1] + bandSignMargins[band]
         }
         val rows = prepared.map { preparedRow ->
             val baseZ = bandStarts[bands[preparedRow.draft.index]]
@@ -707,7 +719,7 @@ class PhysicalCompiler(
         val cells = rows.flatMap { it.cells }
         val width = maxOf(cellWidth, globalTracks.maxOfOrNull { it.footprint.last + 1 } ?: 0)
         val height = if (globalTracks.isEmpty()) activeRouteHeight else activeGlobalPlaneY + 1
-        val length = bandDepths.sum()
+        val length = bandDepths.sum() + bandSignMargins.sum()
 
         val criticality = signalCriticality(netlist)
         val timingCost = globalSignals.sumOf { criticality[it.index].toLong() }
@@ -995,27 +1007,40 @@ class PhysicalCompiler(
             group.signals.forEach signalLoop@ { signal ->
                 val cellPrefix = if (group.direction == PhysicalIoDirection.INPUT) "input-" else "output-"
                 val cell = cells.single { it.name == cellPrefix + signal }
-                val y = if (group.direction == PhysicalIoDirection.INPUT) {
-                    cell.origin.y
-                } else if (cell.cell.name == "output-pad") {
-                    cell.origin.y + OUTPUT_PLANE_OFFSET
+                val direct = when (cell.cell.name) {
+                    "input-pad" -> cell.origin + BlockPos(0, 0, -1)
+                    "output-pad" -> cell.origin + BlockPos(0, OUTPUT_PLANE_OFFSET, -1)
+                    else -> null
+                }
+                val position: BlockPos
+                val state: BlockState
+                if (direct != null) {
+                    require(matrix.contains(direct) && matrix.blockAt(direct).isAir) {
+                        "I/O sign position $direct for ${cell.name} is unavailable"
+                    }
+                    position = direct
+                    state = technology.ioSign.with(Properties.FACING, Direction.NORTH)
                 } else {
-                    cell.origin.y + OUTPUT_PLANE_OFFSET - 1
+                    val y = if (group.direction == PhysicalIoDirection.INPUT) {
+                        cell.origin.y
+                    } else {
+                        cell.origin.y + OUTPUT_PLANE_OFFSET - 1
+                    }
+                    val north = BlockPos(cell.origin.x, y, cell.origin.z - 1)
+                    val south = BlockPos(cell.origin.x, y, cell.origin.z + cell.cell.size.z)
+                    val west = BlockPos(cell.origin.x - 1, y, cell.origin.z)
+                    val east = BlockPos(cell.origin.x + cell.cell.size.x, y, cell.origin.z)
+                    val candidates = when (group.edge) {
+                        PhysicalIoEdge.NORTH -> listOf(north, west, east, south)
+                        PhysicalIoEdge.SOUTH -> listOf(south, east, west, north)
+                        PhysicalIoEdge.WEST -> listOf(west, north, south, east)
+                        PhysicalIoEdge.EAST -> listOf(east, south, north, west)
+                        null -> listOf(north, south, west, east)
+                    }
+                    position = candidates.firstOrNull { matrix.contains(it) && matrix.blockAt(it).isAir }
+                        ?: return@signalLoop
+                    state = group.edge?.let { technology.ioSign.with(Properties.FACING, it.outward) } ?: technology.ioSign
                 }
-                val north = BlockPos(cell.origin.x, y, cell.origin.z - 1)
-                val south = BlockPos(cell.origin.x, y, cell.origin.z + cell.cell.size.z)
-                val west = BlockPos(cell.origin.x - 1, y, cell.origin.z)
-                val east = BlockPos(cell.origin.x + cell.cell.size.x, y, cell.origin.z)
-                val candidates = when (group.edge) {
-                    PhysicalIoEdge.NORTH -> listOf(north, west, east, south)
-                    PhysicalIoEdge.SOUTH -> listOf(south, east, west, north)
-                    PhysicalIoEdge.WEST -> listOf(west, north, south, east)
-                    PhysicalIoEdge.EAST -> listOf(east, south, north, west)
-                    null -> listOf(north, south, west, east)
-                }
-                val position = candidates.firstOrNull { matrix.contains(it) && matrix.blockAt(it).isAir }
-                    ?: return@signalLoop
-                val state = group.edge?.let { technology.ioSign.with(Properties.FACING, it.outward) } ?: technology.ioSign
                 matrix.placeChecked(position, state)
                 val heading = group.name?.let { name ->
                     if (group.direction == PhysicalIoDirection.INPUT) "IN $name" else "OUT $name"
@@ -1156,7 +1181,7 @@ class PhysicalCompiler(
                     .filter { candidate ->
                         tracks.none { placed ->
                             (folded || rowSpansOverlap(candidate.rowSpan, placed.rowSpan)) &&
-                                candidate.footprint.conflicts(placed.footprint, technology.isolation)
+                                    candidate.footprint.conflicts(placed.footprint, technology.isolation)
                         }
                     }
                     .minWithOrNull(
@@ -1776,7 +1801,7 @@ class PhysicalCompiler(
         flow: ViaFlow,
         viaPolicy: ViaPolicy,
     ): Int = endpointViaDescent(endpoint, laneY, flow, viaPolicy) +
-        if (endpoint is Endpoint.Cell) kotlin.math.abs(endpoint.branchOffsetX) else 0
+            if (endpoint is Endpoint.Cell) kotlin.math.abs(endpoint.branchOffsetX) else 0
 
     private fun placeVia(
         sink: RouteSink,
@@ -1835,8 +1860,8 @@ class PhysicalCompiler(
         flow: ViaFlow,
         viaPolicy: ViaPolicy,
     ): Boolean = viaPolicy == ViaPolicy.UPWARD_GLASS &&
-        flow == ViaFlow.UPWARD &&
-        targetY - laneY > technology.viaSignalOffsets.last().y
+            flow == ViaFlow.UPWARD &&
+            targetY - laneY > technology.viaSignalOffsets.last().y
 
     private fun Endpoint.targetY(): Int = when (this) {
         is Endpoint.Cell -> position.y
@@ -1953,10 +1978,10 @@ class PhysicalCompiler(
             val startsVia = coordinate in viaColumns
             val nextStartsVia = (coordinate + stride) in viaColumns
             val repeater = !startsVia && (
-                coordinate in forcedRepeaters ||
-                    decay + 1 >= limit ||
-                    (nextStartsVia && decay + 2 + viaReserve >= technology.signalStrength)
-                )
+                    coordinate in forcedRepeaters ||
+                            decay + 1 >= limit ||
+                            (nextStartsVia && decay + 2 + viaReserve >= technology.signalStrength)
+                    )
             step(coordinate, repeater, decay)
             decay = if (repeater) 0 else decay + 1
         }
@@ -2020,7 +2045,7 @@ class PhysicalCompiler(
                 }
                 else -> require(previousSupport.type.isSolid) {
                     "$supportPos contains $previousSupport owned by signal ${owners[supportPos]?.index} " +
-                        "and cannot support signal ${signal.index} at $pos"
+                            "and cannot support signal ${signal.index} at $pos"
                 }
             }
 
@@ -2271,7 +2296,7 @@ class PhysicalCompiler(
         val area: Long = width.toLong() * length
         val maximumDimension: Int = maxOf(width, length)
         val selectionCost: Long = routingBlocks * ROUTING_SELECTION_WEIGHT +
-            maximumDimension.toLong() * MAX_DIMENSION_SELECTION_WEIGHT + area * AREA_SELECTION_WEIGHT
+                maximumDimension.toLong() * MAX_DIMENSION_SELECTION_WEIGHT + area * AREA_SELECTION_WEIGHT
     }
 
     private class CandidateGeometryException(message: String) : IllegalArgumentException(message)
