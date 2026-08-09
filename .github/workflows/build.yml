@@ -151,12 +151,11 @@ jobs:
           set -euo pipefail
           version="$(cat dustc.version)"
           short="${GITHUB_SHA:0:7}"
-          # The nightly tag has to move to this commit, which means replacing the release.
           gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
           gh release create nightly \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "dustc nightly ($version, $short)" \
-            --notes "Rolling build of \`main\` at $GITHUB_SHA. Replaced on every push, so these downloads are not archival. Set \`dust.updateChannel\` to \`nightly\` to track it from the editor." \
+            --notes "Rolling build of \`main\` at $GITHUB_SHA." \
             release/*
