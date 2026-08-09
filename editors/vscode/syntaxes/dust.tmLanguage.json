@@ -4,6 +4,7 @@
   "scopeName": "source.dust",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#attributes" },
     { "include": "#module" },
     { "include": "#port" },
     { "include": "#keywords" },
@@ -40,6 +41,30 @@
         "0": { "name": "punctuation.definition.comment.end.dust" }
       },
       "patterns": [{ "include": "#block-comment" }]
+    },
+    "attributes": {
+      "begin": "(#)(\\[)([A-Za-z_][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.annotation.dust" },
+        "2": { "name": "punctuation.section.brackets.begin.dust" },
+        "3": { "name": "entity.other.attribute-name.dust" }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.brackets.end.dust" }
+      },
+      "patterns": [
+        {
+          "name": "constant.language.direction.dust",
+          "match": "\\b(north|south|east|west)\\b"
+        },
+        { "include": "#numbers" },
+        {
+          "name": "variable.parameter.attribute.dust",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        },
+        { "include": "#punctuation" }
+      ]
     },
     "module": {
       "match": "\\b(module)\\s+([A-Za-z_][A-Za-z0-9_]*)",

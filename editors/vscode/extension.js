@@ -287,9 +287,26 @@ async function build(context) {
     output.clear();
     output.appendLine(`> ${compiler} build ${source} -o ${schematic} ${extra.join(" ")}`.trimEnd());
 
-    const result = await run(compiler, ["build", source, "-o", schematic, ...extra], cwd);
-    output.append(result.stdout);
-    output.append(result.stderr);
+    let progressBuffer = "";
+    const result = await vscode.window.withProgress(
+        {location: vscode.ProgressLocation.Notification, title: `Building ${path.basename(source)}`, cancellable: false},
+        async (progress) => run(
+            compiler,
+            ["build", source, "-o", schematic, ...extra],
+            cwd,
+            (chunk) => {
+                output.append(chunk);
+                progressBuffer += chunk;
+                const lines = progressBuffer.split(/\r?\n/);
+                progressBuffer = lines.pop() ?? "";
+                for (const line of lines) {
+                    const stage = /^dustc: (synthesis|placement|routing|electrical finalization|emission)$/.exec(line.trim());
+                    if (stage) progress.report({message: stage[1]});
+                }
+            },
+            (chunk) => output.append(chunk),
+        ),
+    );
 
     diagnostics.clear();
     for (const [file, entries] of parseDiagnostics(result.stderr, cwd)) {
@@ -309,14 +326,27 @@ async function build(context) {
     }
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, onStdout, onStderr) {
     return new Promise((resolve) => {
         const child = spawn(command, args, {cwd});
         let stdout = "";
         let stderr = "";
-        child.stdout.on("data", (chunk) => (stdout += chunk));
-        child.stderr.on("data", (chunk) => (stderr += chunk));
-        child.on("error", (error) => resolve({code: -1, stdout, stderr: `${stderr}${describe(error)}\n`}));
+        child.stdout.on("data", (chunk) => {
+            const text = chunk.toString();
+            stdout += text;
+            onStdout?.(text);
+        });
+        child.stderr.on("data", (chunk) => {
+            const text = chunk.toString();
+            stderr += text;
+            onStderr?.(text);
+        });
+        child.on("error", (error) => {
+            const text = `${describe(error)}\n`;
+            stderr += text;
+            onStderr?.(text);
+            resolve({code: -1, stdout, stderr});
+        });
         child.on("close", (code) => resolve({code: code ?? -1, stdout, stderr}));
     });
 }

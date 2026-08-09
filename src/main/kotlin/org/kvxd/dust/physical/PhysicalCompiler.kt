@@ -32,20 +32,35 @@ class PhysicalCompiler(
         val specs = cellInstances(netlist)
         require(specs.isNotEmpty()) { "a physical design needs at least one gate" }
         validateIoLayout(netlist, layout)
-        val plan = searchFloorplan(netlist, specs, io, layout, progress)
+        val selection = searchFloorplan(netlist, specs, io, layout, progress)
+        val plan = selection.plan
 
         val matrix = BlockMatrix(plan.width, plan.height, plan.length)
         plan.cells.forEach { technology.placeCell(matrix, it.cell, it.origin) }
         val sink = MatrixSink(matrix)
         val routingWork = routeWork(plan.rows, plan.globalTracks)
-        progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.ROUTING, completed = 0, total = routingWork, approximate = true))
+        progress.onProgress(
+            PhysicalProgressEvent(
+                PhysicalProgressStage.ROUTING,
+                completed = 0,
+                total = routingWork,
+                candidate = selection.candidate,
+                candidateTotal = selection.candidateTotal,
+                net = 0,
+                netTotal = netlist.signals,
+                approximate = true,
+            ),
+        )
         route(plan.rows, plan.globalTracks, sink) { completed, total, signal ->
             progress.onProgress(
                 PhysicalProgressEvent(
                     PhysicalProgressStage.ROUTING,
                     completed = completed,
                     total = total,
-                    detail = "signal ${signal.index}",
+                    candidate = selection.candidate,
+                    candidateTotal = selection.candidateTotal,
+                    net = signal.index + 1,
+                    netTotal = netlist.signals,
                     approximate = true,
                 ),
             )
@@ -117,7 +132,7 @@ class PhysicalCompiler(
         io: PhysicalIo,
         layout: PhysicalIoLayout?,
         progress: PhysicalProgressListener,
-    ): Floorplan {
+    ): FloorplanSelection {
         val placer = connectivityPlacer(netlist, specs)
         val candidates = rowCandidates(specs)
         val plans = mutableListOf<FloorplanCandidate>()
@@ -135,6 +150,7 @@ class PhysicalCompiler(
                             partitions,
                             assignment,
                             tierCount,
+                            candidateIndex + 1,
                         )
                     } catch (_: CandidateGeometryException) {
 
@@ -161,23 +177,30 @@ class PhysicalCompiler(
             } catch (_: CandidateGeometryException) {
                 null
             }
-            return listOfNotNull(selected.plan, glass).minWith(compareFloorplans())
+            val final = listOfNotNull(
+                selected,
+                glass?.let { selected.copy(plan = it) },
+            ).minWith(compareByFloorplanCandidate())
+            return FloorplanSelection(final.plan, final.candidate, candidates.size)
         }
-        val finalists = mutableListOf(selected.plan)
+        val finalists = mutableListOf(selected)
         for (candidate in plans.sortedWith(compareByFloorplanCandidate()).take(UPWARD_GLASS_CANDIDATES)) {
             try {
-                finalists += floorplan(
-                    netlist,
-                    candidate.partitions,
-                    candidate.assignment,
-                    candidate.tierCount,
-                    ViaPolicy.UPWARD_GLASS,
+                finalists += candidate.copy(
+                    plan = floorplan(
+                        netlist,
+                        candidate.partitions,
+                        candidate.assignment,
+                        candidate.tierCount,
+                        ViaPolicy.UPWARD_GLASS,
+                    ),
                 )
             } catch (_: CandidateGeometryException) {
 
             }
         }
-        return finalists.minWith(compareFloorplans())
+        val final = finalists.minWith(compareByFloorplanCandidate())
+        return FloorplanSelection(final.plan, final.candidate, candidates.size)
     }
 
     private fun compareFloorplans(): Comparator<Floorplan> = compareBy<Floorplan> { it.selectionCost }
@@ -1688,8 +1711,8 @@ class PhysicalCompiler(
         require(kotlin.math.abs(branchOffsetX) == 1) { "upper-plane detour must be one column" }
         val detourX = pin.x + branchOffsetX
         val outsideZ = pin.z + 1
-        val returnZ = outsideZ + 1
-        require(accessZ > returnZ) { "upper-plane access at Z=$accessZ cannot clear pin $pin" }
+        require(accessZ > outsideZ + 1) { "upper-plane access at Z=$accessZ cannot clear pin $pin" }
+        val returnZ = accessZ - 2
 
         sink.place(BlockPos(detourX, pin.y, accessZ), technology.wire, technology.routeSupport, signal)
         var decayAtReturn = initialDecay + 1
@@ -1711,13 +1734,25 @@ class PhysicalCompiler(
             if (repeater) repeaters++
         }
         sink.place(BlockPos(pin.x, pin.y, returnZ), technology.wire, technology.routeSupport, signal)
-        sink.place(
-            BlockPos(pin.x, pin.y, outsideZ),
-            technology.wire,
-            technology.routeSupport,
-            signal,
-        )
-        return Carried(decayAtReturn + 2, repeaters)
+        decayAtReturn++
+        if (returnZ > outsideZ) {
+            placeZRun(
+                sink,
+                pin.x,
+                outsideZ,
+                returnZ - 1,
+                pin.y,
+                Direction.NORTH,
+                emptySet(),
+                signal,
+                initialDecay = decayAtReturn,
+                limit = technology.signalStrength - requiredStrength,
+            ) { z, decay, repeater ->
+                if (z == outsideZ) decayAtReturn = if (repeater) 0 else decay
+                if (repeater) repeaters++
+            }
+        }
+        return Carried(decayAtReturn, repeaters)
     }
 
     private val baseViaDescent: Int get() = technology.viaSignalOffsets.size - 1
@@ -2212,6 +2247,13 @@ class PhysicalCompiler(
         val partitions: List<List<CellSpec>>,
         val assignment: IntArray,
         val tierCount: Int,
+        val candidate: Int,
+    )
+
+    private data class FloorplanSelection(
+        val plan: Floorplan,
+        val candidate: Int,
+        val candidateTotal: Int,
     )
 
     private data class Floorplan(

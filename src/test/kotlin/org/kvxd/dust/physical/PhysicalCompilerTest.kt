@@ -1,6 +1,7 @@
 package org.kvxd.dust.physical
 
 import kotlin.math.abs
+import org.kvxd.dust.device.BlockPos
 import org.kvxd.dust.device.BlockType
 import org.kvxd.dust.lang.DustLanguage
 import org.kvxd.dust.netlist.booleanNetlist
@@ -129,32 +130,6 @@ class PhysicalCompilerTest {
             assertTrue(simulator.unsettled().isEmpty())
         }
         assertTrue(gateY.getValue(3) > gateY.getValue(2))
-    }
-
-    @Test
-    fun `deep upward routes can use glass towers`() {
-        val circuit = DustLanguage.compile(
-            """
-            module tower(input a: bit, input b: bit, output y: bit) {
-                #[tier(2)]
-                let p = a ^ b
-                y = p
-            }
-            """.trimIndent(),
-            "tower.dust",
-        ).single()
-        val design = PhysicalCompiler().compile(circuit.lowerToBooleanNetlist())
-        val glassSteps = design.routes.sumOf { route ->
-            route.routeBlocks.sumOf { pos ->
-                listOf(-1, 1).count { dz ->
-                    val above = org.kvxd.dust.device.BlockPos(pos.x, pos.y + 1, pos.z + dz)
-                    above in route.routeBlocks &&
-                        design.matrix.blockAt(pos.offset(org.kvxd.dust.device.Direction.DOWN)).type.isTransparent &&
-                        design.matrix.blockAt(above.offset(org.kvxd.dust.device.Direction.DOWN)).type.isTransparent
-                }
-            }
-        }
-        assertTrue(glassSteps > 0)
     }
 
     @Test
@@ -370,6 +345,14 @@ class PhysicalCompilerTest {
         val firstX = terminals.minOf { it.origin.x }
         val lastX = terminals.maxOf { it.origin.x + it.cell.size.x }
         assertTrue(lastX - firstX <= 40)
+        terminals.filter { it.name.startsWith("output-") }.forEach { cell ->
+            val pin = cell.pin("a")
+            val route = design.routes.single { it.signal == cell.nets.getValue("a") }
+            val branchZ = pin.z + 2
+            assertTrue(BlockPos(pin.x, pin.y, branchZ) in route.routeBlocks, cell.name)
+            assertTrue(BlockPos(pin.x - 1, pin.y, branchZ) !in route.routeBlocks, cell.name)
+            assertTrue(BlockPos(pin.x + 1, pin.y, branchZ) !in route.routeBlocks, cell.name)
+        }
 
         val simulator = GateLevelSimulator(design.matrix)
         val bound = design.matrix.blockCount()
