@@ -8,6 +8,7 @@ enum class Primitive(val cellType: CellType) {
     AND2(BuiltinCells.and2),
     OR2(BuiltinCells.or2),
     XOR2(BuiltinCells.xor2),
+    MUX2(BuiltinCells.mux2),
 
     LATCH(BuiltinCells.latch),
 }

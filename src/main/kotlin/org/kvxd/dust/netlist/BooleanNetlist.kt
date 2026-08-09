@@ -9,6 +9,8 @@ class BooleanNetlist internal constructor(
     val outputs: Map<String, Signal>,
     val gates: List<Gate>,
     val instances: List<CellInstance>,
+    internal val placements: Map<Signal, SignalPlacement> = emptyMap(),
+    internal val terminalPlacements: Map<Signal, SignalPlacement> = emptyMap(),
 ) {
     private val orderedCombinational: List<CellInstance>
 
@@ -50,6 +52,10 @@ class BooleanNetlist internal constructor(
                 Primitive.AND2 -> state[gate.inputs[0].index] and state[gate.inputs[1].index]
                 Primitive.OR2 -> state[gate.inputs[0].index] or state[gate.inputs[1].index]
                 Primitive.XOR2 -> state[gate.inputs[0].index] xor state[gate.inputs[1].index]
+                Primitive.MUX2 -> {
+                    val select = state[gate.inputs[0].index]
+                    (state[gate.inputs[1].index] and select.inv()) or (state[gate.inputs[2].index] and select)
+                }
                 Primitive.LATCH -> error("storage requires SequentialSimulator")
             }
         }

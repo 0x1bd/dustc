@@ -2,13 +2,16 @@ package org.kvxd.dust.physical
 
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.sqrt
 import org.kvxd.dust.device.BlockMatrix
 import org.kvxd.dust.device.BlockPos
 import org.kvxd.dust.device.BlockState
 import org.kvxd.dust.device.ComponentKind
 import org.kvxd.dust.device.Direction
+import org.kvxd.dust.device.Properties
 import org.kvxd.dust.device.SignBlockEntity
 import org.kvxd.dust.netlist.BooleanNetlist
+import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
 import org.kvxd.dust.technology.CellPin
 import org.kvxd.dust.technology.MinecraftRedstone
@@ -20,25 +23,37 @@ import org.kvxd.dust.technology.placeChecked
 class PhysicalCompiler(
     private val technology: RedstoneTechnology = MinecraftRedstone.technology,
 ) {
-    private val globalPlaneY: Int get() = technology.routeHeight + GLOBAL_PLANE_CLEARANCE
-
     fun compile(
         netlist: BooleanNetlist,
         io: PhysicalIo = PhysicalIo.DEBUG_PADS,
         layout: PhysicalIoLayout? = null,
+        progress: PhysicalProgressListener = PhysicalProgressListener.NONE,
     ): PhysicalDesign {
         val specs = cellInstances(netlist)
         require(specs.isNotEmpty()) { "a physical design needs at least one gate" }
         validateIoLayout(netlist, layout)
-        val plan = searchFloorplan(netlist, specs, io, layout)
+        val plan = searchFloorplan(netlist, specs, io, layout, progress)
 
         val matrix = BlockMatrix(plan.width, plan.height, plan.length)
         plan.cells.forEach { technology.placeCell(matrix, it.cell, it.origin) }
-        placeIoSigns(matrix, plan.cells, layout)
         val sink = MatrixSink(matrix)
-        route(plan.rows, plan.globalTracks, sink)
+        val routingWork = routeWork(plan.rows, plan.globalTracks)
+        progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.ROUTING, completed = 0, total = routingWork, approximate = true))
+        route(plan.rows, plan.globalTracks, sink) { completed, total, signal ->
+            progress.onProgress(
+                PhysicalProgressEvent(
+                    PhysicalProgressStage.ROUTING,
+                    completed = completed,
+                    total = total,
+                    detail = "signal ${signal.index}",
+                    approximate = true,
+                ),
+            )
+        }
+        progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.ELECTRICAL_FINALIZATION, completed = 0, total = 1))
         val owned = sink.owners
         verifyRouteIsolation(owned)
+        placeIoSigns(matrix, plan.cells, layout)
 
         val connections = connections(plan.cells)
 
@@ -62,6 +77,8 @@ class PhysicalCompiler(
             val cell = plan.cells.single { it.name == "output-$name" }
             if (io == PhysicalIo.DEBUG_PADS) cell.origin + BlockPos(0, OUTPUT_PLANE_OFFSET, 0) else cell.pin("a")
         }
+        val delays = measureDelays(plan.rows, plan.globalTracks)
+        progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.ELECTRICAL_FINALIZATION, completed = 1, total = 1))
         return PhysicalDesign(
             netlist,
             technology,
@@ -73,7 +90,7 @@ class PhysicalCompiler(
             plan.rows.size,
             plan.rows.maxOf { it.routes.maxOfOrNull { route -> route.lane + 1 } ?: 0 },
             plan.globalTracks.map { it.signal }.distinct().size,
-            measureDelays(plan.rows, plan.globalTracks),
+            delays,
         )
     }
 
@@ -87,7 +104,11 @@ class PhysicalCompiler(
             }
             pin.name to bits[pin.bit]
         }
-        CellSpec(instance.name, cell, nets, index)
+        val outputs = cell.pins.filter { it.direction == PinDirection.OUTPUT }.map { nets.getValue(it.name) }.distinct()
+        val tiers = outputs.mapNotNull { netlist.placements[it]?.tier }.distinct()
+        require(tiers.size <= 1) { "${instance.name} has conflicting #[tier] constraints $tiers" }
+        val near = outputs.flatMapTo(linkedSetOf()) { netlist.placements[it]?.near.orEmpty() }
+        CellSpec(instance.name, cell, nets, index, tiers.singleOrNull(), near)
     }
 
     private fun searchFloorplan(
@@ -95,32 +116,167 @@ class PhysicalCompiler(
         specs: List<CellSpec>,
         io: PhysicalIo,
         layout: PhysicalIoLayout?,
+        progress: PhysicalProgressListener,
     ): Floorplan {
         val placer = connectivityPlacer(netlist, specs)
-        val plans = rowCandidates(specs.size).flatMap { rows ->
-            placer.place(rows).map { placement ->
-                floorplan(
-                    netlist,
-                    placement.map { row -> row.map { index -> specs[index] } },
-                    io,
-                    layout,
-                )
+        val candidates = rowCandidates(specs)
+        val plans = mutableListOf<Floorplan>()
+        progress.onProgress(PhysicalProgressEvent(PhysicalProgressStage.PLACEMENT, completed = 0, total = candidates.size, candidateTotal = candidates.size, approximate = true))
+        candidates.forEachIndexed { candidateIndex, rows ->
+            placer.place(rows).forEach { placement ->
+                val gatePartitions = splitForcedTierRows(placement, specs)
+                    .map { row -> row.map { index -> specs[index] } }
+                val partitions = attachPads(netlist, gatePartitions, io, layout)
+                tierCounts(partitions).forEach tierLoop@ { tierCount ->
+                    val assignment = tierAssignments(netlist, partitions, tierCount) ?: return@tierLoop
+                    try {
+                        plans += floorplan(netlist, partitions, assignment, tierCount)
+                    } catch (_: CandidateGeometryException) {
+
+                    }
+                }
             }
-        }
-        require(plans.isNotEmpty()) { "no feasible floorplan for ${specs.size} cells" }
-        return if (layout == null) {
-            plans.minWith(compareBy({ it.routingBlocks }, { it.routingRepeaters }, { it.timingCutCost }, { it.area }))
-        } else {
-            plans.minWith(
-                compareBy(
-                    { it.routingBlocks },
-                    { it.maximumDimension },
-                    { it.area },
-                    { it.routingRepeaters },
-                    { it.timingCutCost },
+            progress.onProgress(
+                PhysicalProgressEvent(
+                    PhysicalProgressStage.PLACEMENT,
+                    completed = candidateIndex + 1,
+                    total = candidates.size,
+                    candidate = candidateIndex + 1,
+                    candidateTotal = candidates.size,
+                    detail = "$rows rows",
+                    approximate = true,
                 ),
             )
         }
+        require(plans.isNotEmpty()) { "no feasible floorplan for ${specs.size} cells" }
+        return plans.minWith(
+            compareBy<Floorplan> { it.selectionCost }
+                .thenBy { it.routingBlocks }
+                .thenBy { it.maximumDimension }
+                .thenBy { it.area }
+                .thenBy { it.routingRepeaters }
+                .thenBy { it.timingCutCost }
+                .thenBy { it.tierCount },
+        )
+    }
+
+    private fun splitForcedTierRows(rows: List<List<Int>>, specs: List<CellSpec>): List<List<Int>> = rows.flatMap { row ->
+        val forcedTiers = row.mapNotNull { specs[it].forcedTier }.distinct()
+        if (forcedTiers.size <= 1) {
+            listOf(row)
+        } else {
+            row.groupBy { specs[it].forcedTier }.values.filter { it.isNotEmpty() }
+        }
+    }
+
+    private fun tierCounts(rows: List<List<CellSpec>>): List<Int> {
+        val required = rows.flatten().mapNotNull { it.forcedTier }.maxOrNull()?.plus(1) ?: 1
+        if (required > 1) return listOf(required)
+        if (rows.flatten().any { it.forcedEdge != null }) return listOf(1)
+        return if (rows.size >= 2) listOf(1, 2) else listOf(1)
+    }
+
+    private fun tierAssignments(
+        netlist: BooleanNetlist,
+        rows: List<List<CellSpec>>,
+        tierCount: Int,
+    ): IntArray? {
+        if (tierCount == 1) {
+            return if (rows.flatten().any { it.forcedTier != null && it.forcedTier != 0 }) null else IntArray(rows.size)
+        }
+        val forced = IntArray(rows.size) { -1 }
+        rows.forEachIndexed { row, rowSpecs ->
+            val tiers = rowSpecs.mapNotNull { it.forcedTier }.distinct()
+            if (tiers.size > 1 || tiers.singleOrNull()?.let { it !in 0 until tierCount } == true) return null
+            forced[row] = tiers.singleOrNull() ?: -1
+        }
+        val logicRows = rows.indices.filter { row -> rows[row].any { it.index >= 0 } }
+        val logicRequiredTiers = logicRows.mapNotNull { row -> forced[row].takeIf { it >= 0 } }.maxOrNull()?.plus(1) ?: 1
+        val logicTierCount = minOf(tierCount, maxOf(logicRequiredTiers, if (logicRows.size >= 2) 2 else 1))
+        val signalRows = Array(netlist.signals) { linkedSetOf<Int>() }
+        rows.forEachIndexed { row, rowSpecs ->
+            rowSpecs.forEach { spec -> spec.nets.values.forEach { signalRows[it.index] += row } }
+        }
+        val criticality = signalCriticality(netlist)
+
+        fun valid(assignment: IntArray): Boolean {
+            if (assignment.indices.any { forced[it] >= 0 && forced[it] != assignment[it] }) return false
+            if (logicRows.any { forced[it] < 0 && assignment[it] >= logicTierCount }) return false
+            val occupiedTiers = assignment.toSet()
+            val requiredTiers = forced.filter { it >= 0 }.toSet()
+            if (!occupiedTiers.containsAll(requiredTiers)) return false
+            val logicCounts = IntArray(logicTierCount)
+            logicRows.forEach { row -> if (assignment[row] < logicTierCount) logicCounts[assignment[row]]++ }
+            return logicCounts.maxOrNull()!! - logicCounts.minOrNull()!! <= TIER_ROW_IMBALANCE
+        }
+
+        fun score(assignment: IntArray): Long {
+            val nextBand = IntArray(tierCount)
+            val bands = IntArray(rows.size)
+            rows.indices.forEach { row -> bands[row] = nextBand[assignment[row]]++ }
+            var total = nextBand.maxOrNull()!!.toLong() * TIER_BALANCE_COST
+            signalRows.forEachIndexed { index, touched ->
+                if (touched.size < 2) return@forEachIndexed
+                val minBand = touched.minOf { bands[it] }
+                val maxBand = touched.maxOf { bands[it] }
+                val minTier = touched.minOf { assignment[it] }
+                val maxTier = touched.maxOf { assignment[it] }
+                total += criticality[index].toLong() * (
+                    (maxBand - minBand) * TIER_BAND_SPAN_COST +
+                        (maxTier - minTier) * TIER_VERTICAL_SPAN_COST
+                    )
+            }
+            rows.forEachIndexed { row, rowSpecs ->
+                rowSpecs.forEach { spec ->
+                    spec.nearSignals.forEach nearLoop@{ target ->
+                        val targets = signalRows[target.index]
+                        if (targets.isEmpty()) return@nearLoop
+                        val distance = targets.minOf { other ->
+                            abs(bands[row] - bands[other]) * TIER_BAND_SPAN_COST +
+                                abs(assignment[row] - assignment[other]) * TIER_VERTICAL_SPAN_COST
+                        }
+                        total += distance.toLong() * TIER_NEAR_WEIGHT
+                    }
+                }
+            }
+            return total
+        }
+
+        val candidates = linkedMapOf<String, IntArray>()
+        fun consider(assignment: IntArray) {
+            if (!valid(assignment)) return
+            candidates.putIfAbsent(assignment.joinToString(","), assignment.copyOf())
+        }
+        if (rows.size <= EXACT_TIER_ROWS) {
+            val assignment = IntArray(rows.size)
+            fun visit(row: Int) {
+                if (row == rows.size) {
+                    consider(assignment)
+                    return
+                }
+                if (forced[row] >= 0) {
+                    assignment[row] = forced[row]
+                    visit(row + 1)
+                } else {
+                    val availableTiers = if (row in logicRows) logicTierCount else tierCount
+                    for (tier in 0 until availableTiers) {
+                        assignment[row] = tier
+                        visit(row + 1)
+                    }
+                }
+            }
+            visit(0)
+        } else {
+            consider(IntArray(rows.size) { it % tierCount })
+            consider(IntArray(rows.size) { tierCount - 1 - it % tierCount })
+            consider(IntArray(rows.size) { row -> minOf(tierCount - 1, row * tierCount / rows.size) })
+            consider(IntArray(rows.size) { row ->
+                val block = row / tierCount
+                val local = row % tierCount
+                if (block % 2 == 0) local else tierCount - 1 - local
+            })
+        }
+        return candidates.values.minWithOrNull(compareBy<IntArray>({ score(it) }, { it.joinToString(",") }))
     }
 
     private fun connectivityPlacer(netlist: BooleanNetlist, specs: List<CellSpec>): ConnectivityPlacer {
@@ -158,6 +314,29 @@ class PhysicalCompiler(
             touchesOutput += toOutput
         }
 
+        fun anchorCells(signal: Signal): List<Int> {
+            val driver = driverCells[signal.index]
+            return if (driver >= 0) listOf(driver) else endpointCells[signal.index].distinct()
+        }
+
+        val nearSignatures = hashSetOf<String>()
+        (netlist.placements.entries + netlist.terminalPlacements.entries)
+            .sortedBy { it.key.index }
+            .forEach { (signal, placement) ->
+                placement.near.sortedBy { it.index }.forEach nearLoop@{ target ->
+                    val cells = (anchorCells(signal) + anchorCells(target)).distinct()
+                    if (cells.size < 2) return@nearLoop
+                    val signature = cells.sorted().joinToString(",")
+                    if (!nearSignatures.add(signature)) return@nearLoop
+                    netCells += cells.toIntArray()
+                    netXs += cells.map { specs[it].cell.size.x / 2 }.toIntArray()
+                    weights += maxOf(NEAR_AFFINITY, criticality[signal.index] * NEAR_AFFINITY)
+                    drivers += -1
+                    touchesInput += false
+                    touchesOutput += false
+                }
+            }
+
         return ConnectivityPlacer(
             cellWidths = IntArray(specs.size) { specs[it].cell.size.x + technology.cellGap },
             netEndpointCells = netCells.toTypedArray(),
@@ -171,11 +350,18 @@ class PhysicalCompiler(
         )
     }
 
-    private fun rowCandidates(cellCount: Int): List<Int> = generateSequence(1.0) { it * ROW_LADDER_RATIO }
-        .map { ceil(it).toInt() }
-        .takeWhile { it <= cellCount }
-        .distinct()
-        .toList()
+    private fun rowCandidates(specs: List<CellSpec>): List<Int> {
+        val cellCount = specs.size
+        val totalWidth = specs.sumOf { it.cell.size.x + technology.cellGap }.toDouble()
+        val target = sqrt(totalWidth / SHAPE_ROW_PITCH).coerceAtLeast(1.0)
+        return buildSet {
+            add(1)
+            listOf(0.5, 0.75, 1.0, 1.4, 2.0).forEach { ratio ->
+                add(ceil(target * ratio).toInt().coerceIn(1, cellCount))
+            }
+            if (cellCount <= SMALL_EXHAUSTIVE_ROWS) addAll(1..cellCount)
+        }.sorted()
+    }
 
     private fun signalCriticality(netlist: BooleanNetlist): IntArray {
         val remaining = IntArray(netlist.signals)
@@ -199,13 +385,32 @@ class PhysicalCompiler(
 
     private fun floorplan(
         netlist: BooleanNetlist,
-        gatePartitions: List<List<CellSpec>>,
-        io: PhysicalIo,
-        layout: PhysicalIoLayout?,
+        partitions: List<List<CellSpec>>,
+        tierAssignment: IntArray,
+        tierCount: Int,
     ): Floorplan {
-        val partitions = attachPads(netlist, gatePartitions, io, layout)
-
-        val localCells = partitions.flatMapIndexed(::placeRowCells)
+        require(partitions.size == tierAssignment.size)
+        val activeCellHeight = partitions.flatten().maxOf { it.cell.size.y }
+        val tierPitch = if (tierCount == 1) 0 else activeCellHeight + TIER_CLEARANCE
+        val preliminaryRows = partitions.mapIndexed { row, specs ->
+            placeRowCells(row, specs, tierAssignment[row] * tierPitch)
+        }
+        val contentWidth = preliminaryRows.maxOf { cells -> cells.maxOf { it.origin.x + it.cell.size.x } }
+        val hasWestEdge = partitions.flatten().any { it.forcedEdge == InterfaceEdge.WEST }
+        val hasEastEdge = partitions.flatten().any { it.forcedEdge == InterfaceEdge.EAST }
+        val interiorX = if (hasWestEdge) EDGE_CELL_MARGIN else 0
+        val edgeWidth = interiorX + contentWidth + if (hasEastEdge) EDGE_CELL_MARGIN else 0
+        val localCells = preliminaryRows.flatMapIndexed { row, cells ->
+            val specs = partitions[row]
+            val rowWidth = cells.maxOf { it.origin.x + it.cell.size.x }
+            val offsetX = when {
+                specs.all { it.forcedEdge == InterfaceEdge.WEST } -> 0
+                specs.all { it.forcedEdge == InterfaceEdge.EAST } -> edgeWidth - rowWidth
+                specs.all { it.panel } -> interiorX + (contentWidth - rowWidth) / 2
+                else -> interiorX
+            }
+            cells.map { it.copy(origin = it.origin + BlockPos(offsetX, 0, 0)) }
+        }
         verifyPinColumns(localCells)
         val localConnections = connections(localCells)
         require(localConnections.keys.map { it.index }.toSet() == (0 until netlist.signals).toSet())
@@ -223,12 +428,20 @@ class PhysicalCompiler(
                 }
             }
         }
+        val activeRouteHeight = maxOf(
+            technology.upperPlaneY + (tierCount - 1) * tierPitch + 1,
+            localCells.maxOf { it.origin.y + it.cell.size.y },
+        )
+        val activeGlobalPlaneY = activeRouteHeight + GLOBAL_PLANE_CLEARANCE
         val globalTracks = assignGlobalTracks(
             planGlobalTracks(globalSignals, localConnections),
             cellWidth,
             blockedGlobalViaColumns,
+            activeGlobalPlaneY,
+            tierCount,
         )
         val tracksBySignal = globalTracks.groupBy { it.signal }
+        val foldRows = tierCount > 1 && partitions.flatten().none { it.forcedEdge != null }
 
         val rowDrafts = partitions.indices.map { row ->
             val cells = localCells.filter { it.row == row }
@@ -241,20 +454,29 @@ class PhysicalCompiler(
                     val source = driver.cellEndpoint()
                     val sinks = rowSinks.map { it.cellEndpoint() }.toMutableList<Endpoint>()
                     tracksBySignal[signal].orEmpty().forEach { track ->
-                        if (track.sinkRows.any { it > row }) sinks += Endpoint.Global(track, ViaSense.UP)
-                        if (track.sinkRows.any { it < row }) sinks += Endpoint.Global(track, ViaSense.DOWN)
+                        val viaX = track.viaXForTier(tierAssignment[row])
+                        if (foldRows) {
+                            sinks += Endpoint.Global(track, ViaSense.DOWN, viaX)
+                        } else {
+                            if (track.sinkRows.any { it > row }) sinks += Endpoint.Global(track, ViaSense.UP, viaX)
+                            if (track.sinkRows.any { it < row }) sinks += Endpoint.Global(track, ViaSense.DOWN, viaX)
+                        }
                     }
-                    require(sinks.isNotEmpty())
-                    listOf(LocalRouteDraft(signal, row, source, sinks))
+                    if (sinks.isEmpty()) emptyList() else listOf(LocalRouteDraft(signal, row, source, sinks))
                 } else {
-                    val sense = if (row < driver.cell.row) ViaSense.UP else ViaSense.DOWN
+                    val sense = if (foldRows) ViaSense.DOWN else if (row < driver.cell.row) ViaSense.UP else ViaSense.DOWN
                     checkNotNull(tracksBySignal[signal])
                         .filter { row in it.sinkRows }
                         .map { track ->
                             val sinks = rowSinks.filter { it.globalSinkKey() in track.sinkKeys }
                                 .map { it.cellEndpoint() }
                             require(sinks.isNotEmpty())
-                            LocalRouteDraft(signal, row, Endpoint.Global(track, sense), sinks)
+                            LocalRouteDraft(
+                                signal,
+                                row,
+                                Endpoint.Global(track, sense, track.viaXForTier(tierAssignment[row])),
+                                sinks,
+                            )
                         }
                 }
             }
@@ -269,45 +491,98 @@ class PhysicalCompiler(
             )
         }
 
-        val baseViaReach = technology.viaSignalOffsets.maxOf { abs(it.z) }
-        val globalViaReach = abs(viaOffsets(ViaSense.DOWN, globalPlaneY).last().z)
-        var nextRowZ = 0
-        val rows = rowDrafts.map { draft ->
+        val bands = IntArray(partitions.size)
+        if (foldRows) {
+            val nextBand = IntArray(tierCount)
+            partitions.indices.forEach { row -> bands[row] = nextBand[tierAssignment[row]]++ }
+        } else {
+            partitions.indices.forEach { row -> bands[row] = row }
+        }
+        val bandCount = bands.maxOrNull()?.plus(1) ?: 0
+        val bandCellDepths = IntArray(bandCount)
+        rowDrafts.forEach { draft ->
+            val band = bands[draft.index]
+            bandCellDepths[band] = maxOf(bandCellDepths[band], draft.cellDepth)
+        }
+        val tierLaneOffsets = IntArray(partitions.size)
+        if (foldRows) {
+            for (band in 0 until bandCount) {
+                var offset = 0
+                rowDrafts.filter { bands[it.index] == band }
+                    .sortedBy { tierAssignment[it.index] }
+                    .forEach { draft ->
+                        tierLaneOffsets[draft.index] = offset
+                        val laneCount = draft.routes.maxOfOrNull { it.lane + 1 } ?: 0
+                        if (laneCount > 0) offset += (laneCount - 1) * technology.lanePitch + technology.isolation + 1
+                    }
+            }
+        }
+        val prepared = rowDrafts.map { draft ->
+            val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
+            val baseViaReach = technology.viaSignalOffsets.maxOf { abs(it.z) }
+            val globalViaReach = abs(viaOffsets(ViaSense.DOWN, laneY, activeGlobalPlaneY).last().z)
             val endpointViaReach = draft.routes
                 .flatMap { route -> listOf(route.source) + route.sinks }
                 .maxOfOrNull { endpoint ->
                     when (endpoint) {
                         is Endpoint.Cell -> if (endpoint.sense == ViaSense.DOWN) {
-                            abs(viaOffsets(endpoint.sense, endpoint.position.y).last().z)
+                            abs(viaOffsets(endpoint.sense, laneY, endpoint.position.y).last().z)
                         } else {
                             baseViaReach
                         }
                         is Endpoint.Global -> globalViaReach
                     }
                 } ?: baseViaReach
-
-            val laneBase = nextRowZ + draft.cellDepth + technology.isolation + endpointViaReach
-            val routed = draft.routes.map { route -> route.placeAt(nextRowZ, laneBase + route.lane * technology.lanePitch) }
-            val translatedCells = draft.cells.map { cell -> cell.copy(origin = cell.origin + BlockPos(0, 0, nextRowZ)) }
-            val translatedAbutments = draft.abutments.map { it.copy(z = it.z + nextRowZ) }
-
-            val southExtent = routed.maxOfOrNull {
-                it.southernExtent(globalViaReach)
-            } ?: (nextRowZ + draft.cellDepth - 1)
-            val outputPlaneExtent = routed.maxOfOrNull { route ->
+            val laneReach = if (foldRows) globalViaReach else endpointViaReach
+            val laneBase = bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
+            val routes = draft.routes.map { route ->
+                route.placeAt(0, laneY, laneBase + route.lane * technology.lanePitch)
+            }
+            val southExtent = routes.maxOfOrNull { it.southernExtent(globalViaReach) }
+                ?: (bandCellDepths[bands[draft.index]] - 1)
+            val outputPlaneExtent = routes.maxOfOrNull { route ->
                 (listOf(route.source) + route.sinks)
                     .filterIsInstance<Endpoint.Cell>()
                     .filter { it.sense == ViaSense.UP }
                     .maxOfOrNull { endpoint ->
-                        route.laneZ + viaOffsets(endpoint.sense, endpoint.position.y).last().z
+                        route.laneZ + viaOffsets(endpoint.sense, laneY, endpoint.position.y).last().z
                     } ?: Int.MIN_VALUE
             } ?: Int.MIN_VALUE
-            nextRowZ = maxOf(southExtent, outputPlaneExtent) + technology.isolation + 1
-            PlacedRow(draft.index, translatedCells, routed, translatedAbutments)
+            PreparedRow(
+                draft,
+                laneY,
+                laneBase,
+                maxOf(southExtent, outputPlaneExtent) + technology.isolation + 1,
+            )
+        }
+        val bandDepths = IntArray(bandCount)
+        prepared.forEach { row ->
+            val band = bands[row.draft.index]
+            bandDepths[band] = maxOf(bandDepths[band], row.depth)
+        }
+        val bandStarts = IntArray(bandCount)
+        for (band in 1 until bandCount) {
+            bandStarts[band] = bandStarts[band - 1] + bandDepths[band - 1]
+        }
+        val rows = prepared.map { preparedRow ->
+            val baseZ = bandStarts[bands[preparedRow.draft.index]]
+            val routed = preparedRow.draft.routes.map { route ->
+                route.placeAt(
+                    baseZ,
+                    preparedRow.laneY,
+                    baseZ + preparedRow.laneBase + route.lane * technology.lanePitch,
+                )
+            }
+            val translatedCells = preparedRow.draft.cells.map { cell ->
+                cell.copy(origin = cell.origin + BlockPos(0, 0, baseZ))
+            }
+            val translatedAbutments = preparedRow.draft.abutments.map { it.copy(z = it.z + baseZ) }
+            PlacedRow(preparedRow.draft.index, translatedCells, routed, translatedAbutments)
         }
         val cells = rows.flatMap { it.cells }
-        val width = maxOf(cellWidth, globalTracks.maxOfOrNull { maxOf(it.trunkX, it.viaX) + 1 } ?: 0)
-        val height = if (globalTracks.isEmpty()) technology.routeHeight else globalPlaneY + 1
+        val width = maxOf(cellWidth, globalTracks.maxOfOrNull { it.footprint.last + 1 } ?: 0)
+        val height = if (globalTracks.isEmpty()) activeRouteHeight else activeGlobalPlaneY + 1
+        val length = bandDepths.sum()
 
         val criticality = signalCriticality(netlist)
         val timingCost = globalSignals.sumOf { criticality[it.index].toLong() }
@@ -318,40 +593,34 @@ class PhysicalCompiler(
             globalTracks,
             width,
             height,
-            nextRowZ,
+            length,
             timingCost,
             routing.repeaters,
             routing.blocks,
+            tierCount,
         )
     }
 
-    private fun placeRowCells(row: Int, specs: List<CellSpec>): List<PlacedCell> {
+    private fun placeRowCells(
+        row: Int,
+        specs: List<CellSpec>,
+        yOffset: Int = 0,
+        xOffset: Int = 0,
+    ): List<PlacedCell> {
         val rowDepth = specs.maxOf { it.cell.size.z }
-        val fixed = specs.filter { it.ioX != null }
-        val movable = specs.filter { it.ioX == null }
-        val placed = ArrayList<PlacedCell>(specs.size)
-        fixed.forEach { spec ->
-            placed += PlacedCell(
+        var nextX = xOffset
+        return specs.mapIndexed { index, spec ->
+            val placed = PlacedCell(
                 spec.name,
                 spec.cell,
-                BlockPos(checkNotNull(spec.ioX), technology.cellOriginY, rowDepth - spec.cell.size.z),
+                BlockPos(nextX, technology.cellOriginY + yOffset, rowDepth - spec.cell.size.z),
                 row,
                 spec.nets,
             )
-        }
-        var nextX = fixed.maxOfOrNull { checkNotNull(it.ioX) + it.cell.size.x + technology.cellGap } ?: 0
-        movable.forEachIndexed { index, spec ->
-            placed += PlacedCell(
-                spec.name,
-                spec.cell,
-                BlockPos(nextX, technology.cellOriginY, rowDepth - spec.cell.size.z),
-                row,
-                spec.nets,
-            )
-            val next = movable.getOrNull(index + 1)
+            val next = specs.getOrNull(index + 1)
             nextX += spec.cell.size.x + if (next != null && canAbut(spec, next, rowDepth)) 0 else technology.cellGap
+            placed
         }
-        return placed
     }
 
     private fun canAbut(left: CellSpec, right: CellSpec, rowDepth: Int): Boolean {
@@ -404,92 +673,158 @@ class PhysicalCompiler(
     ): List<List<CellSpec>> {
         val inputCell = if (io == PhysicalIo.DEBUG_PADS) technology.debugInputPad else technology.inputTerminal
         val outputCell = if (io == PhysicalIo.DEBUG_PADS) technology.debugOutputPad else technology.outputTerminal
-        if (layout != null) {
-            val gateRows = IntArray(netlist.gates.size)
-            gatePartitions.forEachIndexed { row, specs -> specs.forEach { gateRows[it.index] = row } }
-            val inputSignals = layout.groups.filter { it.direction == PhysicalIoDirection.INPUT }.flatMap { it.signals }
-            val outputSignals = layout.groups.filter { it.direction == PhysicalIoDirection.OUTPUT }.flatMap { it.signals }
-            val connectedRows = buildList {
-                inputSignals.forEach { name ->
-                    val signal = netlist.inputs.getValue(name)
-                    netlist.gates.indices.filter { signal in netlist.gates[it].inputs }.forEach { add(gateRows[it]) }
+        val gateRows = IntArray(netlist.gates.size)
+        val gatePositions = IntArray(netlist.gates.size)
+        gatePartitions.forEachIndexed { row, specs ->
+            specs.forEachIndexed { position, spec ->
+                if (spec.index >= 0) {
+                    gateRows[spec.index] = row
+                    gatePositions[spec.index] = position
                 }
-                outputSignals.forEach { name ->
-                    val signal = netlist.outputs.getValue(name)
-                    netlist.gates.indexOfFirst { it.output == signal }.takeIf { it >= 0 }?.let { add(gateRows[it]) }
+            }
+        }
+        val layoutEdges = buildMap<Signal, InterfaceEdge> {
+            layout?.groups?.forEach { group ->
+                val edge = group.edge ?: return@forEach
+                group.signals.forEach { name ->
+                    val signal = when (group.direction) {
+                        PhysicalIoDirection.INPUT -> netlist.inputs.getValue(name)
+                        PhysicalIoDirection.OUTPUT -> netlist.outputs.getValue(name)
+                    }
+                    put(signal, InterfaceEdge.valueOf(edge.name))
                 }
-            }.sorted()
-            val panelRow = connectedRows.getOrNull(connectedRows.size / 2) ?: 0
-            val panel = buildList {
-                inputSignals.forEachIndexed { slot, name ->
-                    add(
+            }
+        }
+        val panelOrder = buildMap<Signal, Int> {
+            var order = 0
+            layout?.groups?.filter { it.panel }?.forEach { group ->
+                group.signals.forEach { name ->
+                    val signal = when (group.direction) {
+                        PhysicalIoDirection.INPUT -> netlist.inputs.getValue(name)
+                        PhysicalIoDirection.OUTPUT -> netlist.outputs.getValue(name)
+                    }
+                    put(signal, order++)
+                }
+            }
+        }
+
+        data class Terminal(val signal: Signal, val spec: CellSpec, val row: Int, val anchor: Int, val before: Boolean)
+
+        fun median(values: List<Int>): Int = values.sorted()[values.size / 2]
+
+        fun terminalEdge(signal: Signal): InterfaceEdge? {
+            val attribute = netlist.terminalPlacements[signal]?.edge
+            val external = layoutEdges[signal]
+            require(attribute == null || external == null || attribute == external) {
+                "conflicting edge constraints for signal ${signal.index}"
+            }
+            return attribute ?: external
+        }
+
+        val terminals = buildList {
+            netlist.inputs.forEach { (name, signal) ->
+                val consumers = netlist.gates.indices.filter { signal in netlist.gates[it].inputs }
+                val row = if (consumers.isEmpty()) 0 else median(consumers.map { gateRows[it] })
+                val inRow = consumers.filter { gateRows[it] == row }
+                val anchor = if (inRow.isEmpty()) 0 else median(inRow.map { gatePositions[it] })
+                val placement = netlist.terminalPlacements[signal]
+                add(
+                    Terminal(
+                        signal,
                         CellSpec(
                             "input-$name",
                             inputCell,
-                            mapOf("y" to netlist.inputs.getValue(name)),
+                            mapOf("y" to signal),
                             -1,
-                            ioX = slot * IO_SLOT_PITCH,
+                            placement?.tier,
+                            placement?.near.orEmpty(),
+                            terminalEdge(signal),
+                            signal in panelOrder,
                         ),
-                    )
+                        row,
+                        anchor,
+                        true,
+                    ),
+                )
+            }
+            netlist.outputs.forEach { (name, signal) ->
+                val producer = netlist.gates.indexOfFirst { it.output == signal }
+                val row = if (producer >= 0) gateRows[producer] else {
+                    val consumers = netlist.gates.indices.filter { signal in netlist.gates[it].inputs }
+                    if (consumers.isEmpty()) 0 else median(consumers.map { gateRows[it] })
                 }
-                outputSignals.forEachIndexed { slot, name ->
-                    add(
+                val anchor = if (producer >= 0) gatePositions[producer] else gatePartitions[row].lastIndex.coerceAtLeast(0)
+                val placement = netlist.terminalPlacements[signal]
+                add(
+                    Terminal(
+                        signal,
                         CellSpec(
                             "output-$name",
                             outputCell,
-                            mapOf("a" to netlist.outputs.getValue(name)),
+                            mapOf("a" to signal),
                             -1,
-                            ioX = slot * IO_SLOT_PITCH,
+                            placement?.tier,
+                            placement?.near.orEmpty(),
+                            terminalEdge(signal),
+                            signal in panelOrder,
                         ),
-                    )
+                        row,
+                        anchor,
+                        false,
+                    ),
+                )
+            }
+        }
+
+        val panelTerminals = terminals.filter { it.signal in panelOrder }
+        val regularTerminals = terminals.filter {
+            it.signal !in panelOrder && it.spec.forcedTier == null && it.spec.forcedEdge == null
+        }
+        val regularRows = gatePartitions.mapIndexed { row, gates ->
+            val additions = regularTerminals.filter { it.row == row }.sortedWith(
+                compareBy<Terminal>({ it.anchor }, { !it.before }, { it.spec.name }),
+            )
+            if (additions.isEmpty()) return@mapIndexed gates
+            val slots = Array(gates.size + 1) { mutableListOf<CellSpec>() }
+            val rowDepth = gates.maxOfOrNull { it.cell.size.z } ?: 1
+            additions.forEach { terminal ->
+                var slot = (terminal.anchor + if (terminal.before) 0 else 1).coerceIn(0, gates.size)
+                if (slot in 1 until gates.size && canAbut(gates[slot - 1], gates[slot], rowDepth)) {
+                    slot = if (terminal.before) slot - 1 else slot + 1
                 }
+                slots[slot] += terminal.spec
             }
-            return gatePartitions.mapIndexed { row, gates ->
-                if (row == panelRow) panel + gates else gates
-            }
-        }
-        if (io == PhysicalIo.TERMINALS) {
-            return buildList {
-                add(netlist.inputs.map { (name, signal) ->
-                    CellSpec("input-$name", inputCell, mapOf("y" to signal), -1)
-                })
-                addAll(gatePartitions)
-                add(netlist.outputs.map { (name, signal) ->
-                    CellSpec("output-$name", outputCell, mapOf("a" to signal), -1)
-                })
-            }
-        }
-        val gateRows = IntArray(netlist.gates.size)
-        gatePartitions.forEachIndexed { row, specs -> specs.forEach { gateRows[it.index] = row } }
-
-        val inputRows = netlist.inputs.mapValues { (_, signal) ->
-            netlist.gates.indices
-                .filter { signal in netlist.gates[it].inputs }
-                .minOfOrNull { gateRows[it] }
-                ?: 0
-        }
-        val outputRows = netlist.outputs.mapValues { (_, signal) ->
-            netlist.gates.indexOfFirst { it.output == signal }
-                .takeIf { it >= 0 }
-                ?.let { gateRows[it] }
-                ?: inputRows.entries.singleOrNull { netlist.inputs[it.key] == signal }?.value
-                ?: 0
-        }
-
-        return gatePartitions.mapIndexed { row, gates ->
             buildList {
-                netlist.inputs.forEach { (name, signal) ->
-                    if (inputRows.getValue(name) == row) {
-                        add(CellSpec("input-$name", inputCell, mapOf("y" to signal), -1))
-                    }
-                }
-                addAll(gates)
-                netlist.outputs.forEach { (name, signal) ->
-                    if (outputRows.getValue(name) == row) {
-                        add(CellSpec("output-$name", outputCell, mapOf("a" to signal), -1))
-                    }
+                for (slot in slots.indices) {
+                    addAll(slots[slot])
+                    if (slot < gates.size) add(gates[slot])
                 }
             }
+        }
+
+        val constrained = terminals.filter { it.signal !in panelOrder && it !in regularTerminals }
+        val north = constrained.filter { it.spec.forcedEdge == InterfaceEdge.NORTH }.map { it.spec }
+        val south = constrained.filter { it.spec.forcedEdge == InterfaceEdge.SOUTH }.map { it.spec }
+        val west = constrained.filter { it.spec.forcedEdge == InterfaceEdge.WEST }.map { listOf(it.spec) }
+        val east = constrained.filter { it.spec.forcedEdge == InterfaceEdge.EAST }.map { listOf(it.spec) }
+        val tierOnly = constrained.filter { it.spec.forcedEdge == null }.map { listOf(it.spec) }
+        fun panelRows(edge: InterfaceEdge): List<List<CellSpec>> = panelTerminals
+            .filter { (it.spec.forcedEdge ?: InterfaceEdge.NORTH) == edge }
+            .sortedBy { panelOrder.getValue(it.signal) }
+            .groupBy { it.spec.forcedTier }
+            .values
+            .map { group -> group.map { it.spec } }
+        val northPanels = panelRows(InterfaceEdge.NORTH)
+        val southPanels = panelRows(InterfaceEdge.SOUTH)
+        return buildList {
+            addAll(northPanels)
+            if (north.isNotEmpty()) add(north)
+            addAll(regularRows)
+            addAll(west)
+            addAll(east)
+            addAll(tierOnly)
+            if (south.isNotEmpty()) add(south)
+            addAll(southPanels)
         }
     }
 
@@ -503,6 +838,26 @@ class PhysicalCompiler(
         require(outputs.toSet() == netlist.outputs.keys && outputs.size == netlist.outputs.size) {
             "I/O layout outputs do not match ${netlist.outputs.keys}"
         }
+        layout.groups.filter { it.panel }.forEach { group ->
+            require(group.name != null) { "a panel requires a named I/O group" }
+            val signals = group.signals.map { name ->
+                when (group.direction) {
+                    PhysicalIoDirection.INPUT -> netlist.inputs.getValue(name)
+                    PhysicalIoDirection.OUTPUT -> netlist.outputs.getValue(name)
+                }
+            }
+            val edges = buildSet {
+                group.edge?.let { add(InterfaceEdge.valueOf(it.name)) }
+                signals.mapNotNullTo(this) { netlist.terminalPlacements[it]?.edge }
+            }
+            require(edges.size <= 1) { "panel '${group.name}' has conflicting edge constraints" }
+            require(edges.none { it == InterfaceEdge.EAST || it == InterfaceEdge.WEST }) {
+                "a panel currently supports north/south edges"
+            }
+            require(signals.mapNotNull { netlist.terminalPlacements[it]?.tier }.distinct().size <= 1) {
+                "panel '${group.name}' has conflicting tier constraints"
+            }
+        }
     }
 
     private fun placeIoSigns(
@@ -512,17 +867,31 @@ class PhysicalCompiler(
     ) {
         if (layout == null) return
         layout.groups.forEach { group ->
-            group.signals.forEach { signal ->
+            group.signals.forEach signalLoop@ { signal ->
                 val cellPrefix = if (group.direction == PhysicalIoDirection.INPUT) "input-" else "output-"
                 val cell = cells.single { it.name == cellPrefix + signal }
-                val position = if (group.direction == PhysicalIoDirection.INPUT) {
-                    cell.origin + BlockPos(0, 0, -1)
+                val y = if (group.direction == PhysicalIoDirection.INPUT) {
+                    cell.origin.y
                 } else if (cell.cell.name == "output-pad") {
-                    cell.origin + BlockPos(0, OUTPUT_PLANE_OFFSET, -1)
+                    cell.origin.y + OUTPUT_PLANE_OFFSET
                 } else {
-                    cell.origin + BlockPos(0, OUTPUT_PLANE_OFFSET - 1, -1)
+                    cell.origin.y + OUTPUT_PLANE_OFFSET - 1
                 }
-                matrix.placeChecked(position, technology.ioSign)
+                val north = BlockPos(cell.origin.x, y, cell.origin.z - 1)
+                val south = BlockPos(cell.origin.x, y, cell.origin.z + cell.cell.size.z)
+                val west = BlockPos(cell.origin.x - 1, y, cell.origin.z)
+                val east = BlockPos(cell.origin.x + cell.cell.size.x, y, cell.origin.z)
+                val candidates = when (group.edge) {
+                    PhysicalIoEdge.NORTH -> listOf(north, west, east, south)
+                    PhysicalIoEdge.SOUTH -> listOf(south, east, west, north)
+                    PhysicalIoEdge.WEST -> listOf(west, north, south, east)
+                    PhysicalIoEdge.EAST -> listOf(east, south, north, west)
+                    null -> listOf(north, south, west, east)
+                }
+                val position = candidates.firstOrNull { matrix.contains(it) && matrix.blockAt(it).isAir }
+                    ?: return@signalLoop
+                val state = group.edge?.let { technology.ioSign.with(Properties.FACING, it.outward) } ?: technology.ioSign
+                matrix.placeChecked(position, state)
                 val heading = group.name?.let { name ->
                     if (group.direction == PhysicalIoDirection.INPUT) "IN $name" else "OUT $name"
                 } ?: if (group.direction == PhysicalIoDirection.INPUT) {
@@ -613,7 +982,10 @@ class PhysicalCompiler(
         requests: List<GlobalTrackRequest>,
         cellWidth: Int,
         blockedViaColumns: Set<Int>,
+        planeY: Int,
+        tierCount: Int,
     ): List<GlobalTrack> {
+        val folded = tierCount > 1
         val tracks = mutableListOf<GlobalTrack>()
         requests.sortedWith(
             compareByDescending<GlobalTrackRequest> { (it.rowSpan.last - it.rowSpan.first + 1) * it.sinkRows.size }
@@ -627,9 +999,16 @@ class PhysicalCompiler(
                 val viaCandidates = linkedSetOf(request.preferredX - radius, request.preferredX + radius)
                 chosen = viaCandidates.asSequence()
                     .filter { it >= 0 }
-                    .filter { viaX -> blockedViaColumns.none { abs(it - viaX) <= technology.isolation } }
+                    .filter { viaX ->
+                        (0 until tierCount).all { tier ->
+                            val tierViaX = viaX + tier * GLOBAL_TIER_VIA_PITCH
+                            blockedViaColumns.none { abs(it - tierViaX) <= technology.isolation }
+                        }
+                    }
                     .flatMap { viaX ->
-                        val trunkCandidates = if (request.sinkRows.size == 1) {
+                        val trunkCandidates = if (folded) {
+                            sequenceOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
+                        } else if (request.sinkRows.size == 1) {
                             sequenceOf(viaX, viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
                         } else {
                             sequenceOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
@@ -644,12 +1023,14 @@ class PhysicalCompiler(
                                     request.sinkRows,
                                     trunkX,
                                     viaX,
+                                    planeY,
+                                    tierCount,
                                 )
                             }
                     }
                     .filter { candidate ->
                         tracks.none { placed ->
-                            rowSpansOverlap(candidate.rowSpan, placed.rowSpan) &&
+                            (folded || rowSpansOverlap(candidate.rowSpan, placed.rowSpan)) &&
                                 candidate.footprint.conflicts(placed.footprint, technology.isolation)
                         }
                     }
@@ -749,31 +1130,54 @@ class PhysicalCompiler(
         }
     }
 
-    private fun route(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>, sink: RouteSink): DelayLog {
+    private fun routeWork(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>): Int =
+        rows.sumOf { it.routes.size + it.abutments.size } + globalTracks.size
+
+    private fun route(
+        rows: List<PlacedRow>,
+        globalTracks: List<GlobalTrack>,
+        sink: RouteSink,
+        progress: ((completed: Int, total: Int, signal: Signal) -> Unit)? = null,
+    ): DelayLog {
         val log = DelayLog()
         val allRoutes = rows.flatMap { it.routes }
-        allRoutes.filter { it.source is Endpoint.Cell }.forEach { route -> route.route(sink, 0, 0, log) }
+        val runs = globalRuns(rows, globalTracks)
+        val total = routeWork(rows, globalTracks)
+        var completed = 0
+        fun complete(signal: Signal) {
+            completed++
+            progress?.invoke(completed, total, signal)
+        }
+        allRoutes.filter { it.source is Endpoint.Cell }.forEach { route ->
+            route.route(sink, 0, 0, log)
+            complete(route.signal)
+        }
         rows.flatMap { it.abutments }.forEach { abutment ->
             abutment.columns.forEach { x ->
                 sink.place(
-                    BlockPos(x, technology.upperPlaneY, abutment.z),
+                    BlockPos(x, abutment.y, abutment.z),
                     technology.wire,
                     technology.routeSupport,
                     abutment.signal,
                 )
             }
-            log.pinTicks[BlockPos(abutment.sinkX, technology.upperPlaneY, abutment.z)] = 0
+            log.pinTicks[BlockPos(abutment.sinkX, abutment.y, abutment.z)] = 0
+            complete(abutment.signal)
         }
-        globalRuns(rows, globalTracks).forEach { run -> placeGlobalRun(sink, run, log) }
+        runs.forEach { run ->
+            placeGlobalRun(sink, run, log)
+            complete(run.signal)
+        }
         allRoutes.filter { it.source is Endpoint.Global }.forEach { route ->
             val source = route.source as Endpoint.Global
-            val key = TapKey(source.track, route.laneZ)
+            val key = TapKey(source.track, route.laneY, route.laneZ)
             route.route(
                 sink,
                 checkNotNull(log.tapDecay[key]) { "missing global decay for signal ${route.signal.index}" },
                 log.tapTicks[key] ?: 0,
                 log,
             )
+            complete(route.signal)
         }
         return log
     }
@@ -787,51 +1191,123 @@ class PhysicalCompiler(
             val source = segments.single { route ->
                 route.sinks.filterIsInstance<Endpoint.Global>().any { it.track == track }
             }
-            val handoffs = source.sinks.filterIsInstance<Endpoint.Global>()
+            val starts = source.sinks.filterIsInstance<Endpoint.Global>()
                 .filter { it.track == track }
-                .associate { endpoint -> endpoint.sense to globalTapZ(source, endpoint) }
+                .map { endpoint -> GlobalStart(endpoint.sense, globalTapZ(source, endpoint), endpoint.viaX) }
             val taps = segments.mapNotNull { route ->
                 (route.source as? Endpoint.Global)?.takeIf { it.track == track }?.let { endpoint ->
-                    GlobalTap(globalTapZ(route, endpoint), route.laneZ)
+                    GlobalTap(globalTapZ(route, endpoint), route.laneY, route.laneZ, endpoint.viaX)
                 }
             }
+            require(starts.isNotEmpty()) { "global track for signal ${track.signal.index} has no handoff" }
             require(taps.isNotEmpty()) { "global track for signal ${track.signal.index} has no tap" }
-            require(taps.none { it.z in handoffs.values }) {
-                "global track for signal ${track.signal.index} taps its own handoff"
-            }
             GlobalRun(
                 track.signal,
                 track,
-                handoffs[ViaSense.UP],
-                handoffs[ViaSense.DOWN],
+                starts.sortedWith(compareBy<GlobalStart>({ it.z }, { it.sense.ordinal })),
                 taps.sortedBy { it.z },
             )
         }
 
     private fun globalTapZ(route: LocalRoute, endpoint: Endpoint.Global): Int =
-        route.laneZ + viaOffsets(endpoint.sense, globalPlaneY).last().z
+        route.laneZ + viaOffsets(endpoint.sense, route.laneY, endpoint.track.planeY).last().z
 
     private fun routingCost(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>): RoutingCost =
         CountingSink().also { route(rows, globalTracks, it) }.let { RoutingCost(it.repeaters, it.blocks) }
 
     private fun placeGlobalRun(sink: RouteSink, run: GlobalRun, log: DelayLog) {
-        listOf(Direction.NORTH, Direction.SOUTH).forEach { travel ->
-            val south = travel == Direction.SOUTH
-            val sense = if (south) ViaSense.UP else ViaSense.DOWN
-            val start = (if (south) run.southStartZ else run.northStartZ) ?: return@forEach
-            val taps = run.taps.filter { if (south) it.z > start else it.z < start }
-            val key = HandoffKey(run.track, sense)
-            placeGlobalArm(
+        val assigned = run.taps.groupBy { tap ->
+            run.starts.minWith(compareBy<GlobalStart>({ abs(it.z - tap.z) }, { it.sense.ordinal }))
+        }
+        run.starts.forEach { start ->
+            val key = HandoffKey(run.track, start.sense)
+            val handoffDecay = checkNotNull(log.handoffDecay[key]) {
+                "missing global handoff for signal ${run.signal.index}"
+            }
+            val handoffTicks = log.handoffTicks[key] ?: 0
+            val atTrunk = placeGlobalConnector(
                 sink,
                 run,
-                start,
-                if (south) taps else taps.reversed(),
-                travel,
-                checkNotNull(log.handoffDecay[key]) { "missing global handoff for signal ${run.signal.index}" },
-                log.handoffTicks[key] ?: 0,
-                log,
+                start.z,
+                start.viaX,
+                run.track.trunkX,
+                handoffDecay,
+                0,
             )
+            val taps = assigned[start].orEmpty()
+            taps.filter { it.z == start.z }.forEach { tap ->
+                recordGlobalTap(sink, run, tap, atTrunk.decay, atTrunk.repeaters, handoffTicks, log)
+            }
+            listOf(Direction.NORTH, Direction.SOUTH).forEach { travel ->
+                val south = travel == Direction.SOUTH
+                val arm = taps.filter { if (south) it.z > start.z else it.z < start.z }
+                placeGlobalArm(
+                    sink,
+                    run,
+                    start.z,
+                    if (south) arm.sortedBy { it.z } else arm.sortedByDescending { it.z },
+                    travel,
+                    atTrunk.decay,
+                    handoffTicks + atTrunk.repeaters,
+                    log,
+                )
+            }
         }
+    }
+
+    private fun placeGlobalConnector(
+        sink: RouteSink,
+        run: GlobalRun,
+        z: Int,
+        fromX: Int,
+        toX: Int,
+        initialDecay: Int,
+        viaReserve: Int,
+    ): Carried {
+        if (fromX == toX) return Carried(initialDecay, 0)
+        val travel = if (toX > fromX) Direction.EAST else Direction.WEST
+        var decayAtEnd = initialDecay
+        var repeaters = 0
+        placeXRun(
+            sink,
+            minOf(fromX, toX),
+            maxOf(fromX, toX),
+            run.track.planeY,
+            z,
+            travel,
+            emptySet(),
+            run.signal,
+            initialDecay = initialDecay,
+            viaColumns = setOf(fromX, toX),
+            viaReserve = viaReserve,
+        ) { x, decay, repeater ->
+            if (repeater) repeaters++
+            if (x == toX) decayAtEnd = if (repeater) 0 else decay
+        }
+        return Carried(decayAtEnd, repeaters)
+    }
+
+    private fun recordGlobalTap(
+        sink: RouteSink,
+        run: GlobalRun,
+        tap: GlobalTap,
+        trunkDecay: Int,
+        trunkRepeaters: Int,
+        inboundTicks: Int,
+        log: DelayLog,
+    ) {
+        val connector = placeGlobalConnector(
+            sink,
+            run,
+            tap.z,
+            run.track.trunkX,
+            tap.viaX,
+            trunkDecay,
+            globalViaDescent(run.track, tap.laneY),
+        )
+        val key = TapKey(run.track, tap.laneY, tap.laneZ)
+        log.tapDecay[key] = connector.decay
+        log.tapTicks[key] = inboundTicks + trunkRepeaters + connector.repeaters
     }
 
     private fun placeGlobalArm(
@@ -850,27 +1326,34 @@ class PhysicalCompiler(
             add(startZ)
             taps.forEach { add(it.z) }
         }
-        val tapsByZ = taps.associateBy { it.z }
+        val tapsByZ = taps.groupBy { it.z }
         var repeaters = 0
         placeZRun(
             sink,
             run.track.trunkX,
             minOf(startZ, endZ),
             maxOf(startZ, endZ),
-            globalPlaneY,
+            run.track.planeY,
             travel,
             emptySet(),
             run.signal,
             initialDecay = initialDecay,
             protectedPositions = protected,
-            viaReserve = globalViaDescent,
+            viaReserve = taps.maxOf {
+                abs(it.viaX - run.track.trunkX) + globalViaDescent(run.track, it.laneY)
+            },
         ) { z, decay, repeater ->
             if (repeater) repeaters++
-            val tap = tapsByZ[z]
-            if (tap != null) {
-                val key = TapKey(run.track, tap.laneZ)
-                log.tapDecay[key] = if (repeater) 0 else decay
-                log.tapTicks[key] = inboundTicks + repeaters
+            tapsByZ[z].orEmpty().forEach { tap ->
+                recordGlobalTap(
+                    sink,
+                    run,
+                    tap,
+                    if (repeater) 0 else decay,
+                    0,
+                    inboundTicks + repeaters,
+                    log,
+                )
             }
         }
     }
@@ -888,13 +1371,13 @@ class PhysicalCompiler(
             if (arm.isEmpty()) return@forEach
             val viaColumns = arm.toSet() + sourceX
             val viaReserve = (listOf(source) + sinks.filter { it.x in viaColumns })
-                .maxOf { endpoint -> endpointLaneReserve(endpoint) }
+                .maxOf { endpoint -> endpointLaneReserve(endpoint, laneY) }
             var armRepeaters = 0
             placeXRun(
                 sink,
                 minOf(sourceX, arm.min()),
                 maxOf(sourceX, arm.max()),
-                technology.lowerPlaneY,
+                laneY,
                 laneZ,
                 travel,
                 emptySet(),
@@ -925,9 +1408,9 @@ class PhysicalCompiler(
 
     private fun LocalRoute.placeSourceEndpoint(sink: RouteSink, inboundDecay: Int): Carried = when (source) {
         is Endpoint.Cell -> {
-            val descent = endpointViaDescent(source)
-            placeVia(sink, source.x, laneZ, source.sense, signal, source.position.y)
-            val accessZ = laneZ + viaOffsets(source.sense, source.position.y).last().z
+            val descent = endpointViaDescent(source, laneY)
+            placeVia(sink, source.x, laneY, laneZ, source.sense, signal, source.position.y)
+            val accessZ = laneZ + viaOffsets(source.sense, laneY, source.position.y).last().z
             val branch = routeUpperBranch(
                 sink,
                 source.position,
@@ -944,17 +1427,17 @@ class PhysicalCompiler(
         }
 
         is Endpoint.Global -> {
-            placeVia(sink, source.x, laneZ, source.sense, signal, globalPlaneY)
-            Carried(inboundDecay + globalViaDescent, 0)
+            placeVia(sink, source.x, laneY, laneZ, source.sense, signal, source.track.planeY)
+            Carried(inboundDecay + globalViaDescent(source.track, laneY), 0)
         }
     }
 
     private fun LocalRoute.placeSinkEndpoint(sink: RouteSink, endpoint: Endpoint, laneDecay: Int): Carried =
         when (endpoint) {
             is Endpoint.Cell -> {
-                val descent = endpointViaDescent(endpoint)
-                placeVia(sink, endpoint.x, laneZ, endpoint.sense, signal, endpoint.position.y)
-                val accessZ = laneZ + viaOffsets(endpoint.sense, endpoint.position.y).last().z
+                val descent = endpointViaDescent(endpoint, laneY)
+                placeVia(sink, endpoint.x, laneY, laneZ, endpoint.sense, signal, endpoint.position.y)
+                val accessZ = laneZ + viaOffsets(endpoint.sense, laneY, endpoint.position.y).last().z
                 routeUpperBranch(
                     sink,
                     endpoint.position,
@@ -970,8 +1453,8 @@ class PhysicalCompiler(
             }
 
             is Endpoint.Global -> {
-                placeVia(sink, endpoint.x, laneZ, endpoint.sense, signal, globalPlaneY)
-                Carried(laneDecay + globalViaDescent, 0)
+                placeVia(sink, endpoint.x, laneY, laneZ, endpoint.sense, signal, endpoint.track.planeY)
+                Carried(laneDecay + globalViaDescent(endpoint.track, laneY), 0)
             }
         }
 
@@ -1085,35 +1568,38 @@ class PhysicalCompiler(
 
     private val baseViaDescent: Int get() = technology.viaSignalOffsets.size - 1
 
-    private val globalViaDescent: Int get() = viaOffsets(ViaSense.DOWN, globalPlaneY).size - 1
+    private fun globalViaDescent(track: GlobalTrack, laneY: Int): Int =
+        viaOffsets(ViaSense.DOWN, laneY, track.planeY).size - 1
 
-    private fun endpointViaDescent(endpoint: Endpoint): Int = when (endpoint) {
-        is Endpoint.Cell -> viaOffsets(endpoint.sense, endpoint.position.y).size - 1
-        is Endpoint.Global -> globalViaDescent
+    private fun endpointViaDescent(endpoint: Endpoint, laneY: Int): Int = when (endpoint) {
+        is Endpoint.Cell -> viaOffsets(endpoint.sense, laneY, endpoint.position.y).size - 1
+        is Endpoint.Global -> globalViaDescent(endpoint.track, laneY)
     }
 
-    private fun endpointLaneReserve(endpoint: Endpoint): Int = endpointViaDescent(endpoint) +
+    private fun endpointLaneReserve(endpoint: Endpoint, laneY: Int): Int = endpointViaDescent(endpoint, laneY) +
         if (endpoint is Endpoint.Cell) kotlin.math.abs(endpoint.branchOffsetX) else 0
 
     private fun placeVia(
         sink: RouteSink,
         x: Int,
+        laneY: Int,
         laneZ: Int,
         sense: ViaSense,
         signal: Signal,
-        targetY: Int = technology.upperPlaneY,
+        targetY: Int,
     ) {
-        val origin = BlockPos(x, technology.lowerPlaneY, laneZ)
-        viaOffsets(sense, targetY).forEach { offset ->
+        val origin = BlockPos(x, laneY, laneZ)
+        viaOffsets(sense, laneY, targetY).forEach { offset ->
             sink.place(origin + offset, technology.wire, technology.viaSupport, signal)
         }
     }
 
-    private fun viaOffsets(sense: ViaSense, targetY: Int = technology.upperPlaneY): List<BlockPos> {
-        require(targetY >= technology.upperPlaneY) { "cannot route down from pin plane Y=$targetY" }
+    private fun viaOffsets(sense: ViaSense, laneY: Int, targetY: Int): List<BlockPos> {
+        val baseRise = technology.viaSignalOffsets.last().y
+        require(targetY - laneY >= baseRise) { "cannot route from lane Y=$laneY to target Y=$targetY" }
         val base = technology.viaSignalOffsets
         val last = base.last()
-        val extra = targetY - technology.upperPlaneY
+        val extra = targetY - laneY - baseRise
         val down = base + (1..extra).map { step ->
             BlockPos(last.x, last.y + step, last.z - step)
         }
@@ -1228,14 +1714,28 @@ class PhysicalCompiler(
     }
 
     private class CountingSink : RouteSink {
-        private val seen = HashSet<BlockPos>()
+        private val owners = HashMap<BlockPos, Signal>()
         var repeaters: Long = 0
             private set
         var blocks: Long = 0
             private set
 
         override fun place(pos: BlockPos, state: BlockState, support: BlockState, signal: Signal) {
-            if (!seen.add(pos)) return
+            val previous = owners.putIfAbsent(pos, signal)
+            if (previous != null) {
+                if (previous != signal) {
+                    throw CandidateGeometryException("signals ${previous.index} and ${signal.index} overlap at $pos")
+                }
+                return
+            }
+            Direction.HORIZONTALS.forEach { direction ->
+                val neighbour = owners[pos.offset(direction)]
+                if (neighbour != null && neighbour != signal) {
+                    throw CandidateGeometryException(
+                        "signals ${neighbour.index} and ${signal.index} are not isolated at $pos",
+                    )
+                }
+            }
             blocks++
             if (state.type.component == ComponentKind.REPEATER) repeaters++
         }
@@ -1292,7 +1792,10 @@ class PhysicalCompiler(
         val cell: StandardCell,
         val nets: Map<String, Signal>,
         val index: Int,
-        val ioX: Int? = null,
+        val forcedTier: Int? = null,
+        val nearSignals: Set<Signal> = emptySet(),
+        val forcedEdge: org.kvxd.dust.netlist.InterfaceEdge? = null,
+        val panel: Boolean = false,
     )
 
     private data class AbutmentSeam(
@@ -1320,8 +1823,8 @@ class PhysicalCompiler(
             override val x: Int get() = position.x
         }
 
-        data class Global(val track: GlobalTrack, val sense: ViaSense) : Endpoint {
-            override val x: Int get() = track.viaX
+        data class Global(val track: GlobalTrack, val sense: ViaSense, val viaX: Int) : Endpoint {
+            override val x: Int get() = viaX
         }
     }
 
@@ -1352,15 +1855,16 @@ class PhysicalCompiler(
             if (!source.allowsHorizontalAbutment || !sink.allowsHorizontalAbutment) return null
             if (source.position.z != sink.position.z) return null
             if (maximumX - minimumX > cellGap + 1) return null
-            return Abutment(signal, minimumX + 1..maximumX - 1, source.position.z, sink.x)
+            return Abutment(signal, minimumX + 1..maximumX - 1, source.position.y, source.position.z, sink.x)
         }
 
-        fun placeAt(rowZ: Int, laneZ: Int): LocalRoute = LocalRoute(
+        fun placeAt(rowZ: Int, laneY: Int, laneZ: Int): LocalRoute = LocalRoute(
             signal,
             row,
             source.translate(rowZ),
             sinks.map { it.translate(rowZ) },
             lane,
+            laneY,
             laneZ,
         )
 
@@ -1376,6 +1880,7 @@ class PhysicalCompiler(
         val source: Endpoint,
         val sinks: List<Endpoint>,
         val lane: Int,
+        val laneY: Int,
         val laneZ: Int,
     ) {
 
@@ -1388,6 +1893,7 @@ class PhysicalCompiler(
     private data class Abutment(
         val signal: Signal,
         val columns: IntRange,
+        val y: Int,
         val z: Int,
         val sinkX: Int,
     )
@@ -1398,6 +1904,13 @@ class PhysicalCompiler(
         val routes: List<LocalRouteDraft>,
         val abutments: List<Abutment>,
         val cellDepth: Int,
+    )
+
+    private data class PreparedRow(
+        val draft: RowDraft,
+        val laneY: Int,
+        val laneBase: Int,
+        val depth: Int,
     )
 
     private data class PlacedRow(
@@ -1437,22 +1950,27 @@ class PhysicalCompiler(
         val sinkRows: Set<Int>,
         val trunkX: Int,
         val viaX: Int,
+        val planeY: Int,
+        val tierCount: Int,
     ) {
-        val footprint: IntRange = minOf(trunkX, viaX)..maxOf(trunkX, viaX)
+        fun viaXForTier(tier: Int): Int = viaX + tier * GLOBAL_TIER_VIA_PITCH
+
+        val footprint: IntRange = minOf(trunkX, viaX)..maxOf(trunkX, viaXForTier(tierCount - 1))
         val rowSpan: IntRange = minOf(driverRow, sinkRows.min())..maxOf(driverRow, sinkRows.max())
     }
 
     private data class HandoffKey(val track: GlobalTrack, val sense: ViaSense)
 
-    private data class TapKey(val track: GlobalTrack, val laneZ: Int)
+    private data class TapKey(val track: GlobalTrack, val laneY: Int, val laneZ: Int)
 
-    private data class GlobalTap(val z: Int, val laneZ: Int)
+    private data class GlobalStart(val sense: ViaSense, val z: Int, val viaX: Int)
+
+    private data class GlobalTap(val z: Int, val laneY: Int, val laneZ: Int, val viaX: Int)
 
     private data class GlobalRun(
         val signal: Signal,
         val track: GlobalTrack,
-        val southStartZ: Int?,
-        val northStartZ: Int?,
+        val starts: List<GlobalStart>,
         val taps: List<GlobalTap>,
     )
 
@@ -1468,18 +1986,37 @@ class PhysicalCompiler(
         val timingCutCost: Long,
         val routingRepeaters: Long,
         val routingBlocks: Long,
+        val tierCount: Int,
     ) {
         val area: Long = width.toLong() * length
         val maximumDimension: Int = maxOf(width, length)
+        val selectionCost: Long = routingBlocks * ROUTING_SELECTION_WEIGHT +
+            maximumDimension.toLong() * MAX_DIMENSION_SELECTION_WEIGHT + area * AREA_SELECTION_WEIGHT
     }
+
+    private class CandidateGeometryException(message: String) : IllegalArgumentException(message)
 
     private companion object {
 
-        const val ROW_LADDER_RATIO = 1.4
+        const val SHAPE_ROW_PITCH = 12.0
+        const val SMALL_EXHAUSTIVE_ROWS = 8
+        const val NEAR_AFFINITY = 12
+        const val EXACT_TIER_ROWS = 8
+        const val TIER_ROW_IMBALANCE = 1
+        const val TIER_CLEARANCE = 2
+        const val TIER_BALANCE_COST = 12L
+        const val TIER_BAND_SPAN_COST = 24
+        const val TIER_VERTICAL_SPAN_COST = 12
+        const val TIER_NEAR_WEIGHT = 8
+        const val EDGE_CELL_MARGIN = 4
+        const val ROUTING_SELECTION_WEIGHT = 100L
+        const val MAX_DIMENSION_SELECTION_WEIGHT = 600L
+        const val AREA_SELECTION_WEIGHT = 5L
 
         const val IO_SLOT_PITCH = 3
         const val OUTPUT_PLANE_OFFSET = 3
         const val GLOBAL_TAP_OFFSET = 1
+        const val GLOBAL_TIER_VIA_PITCH = 2
         const val GLOBAL_ROW_GUARD = 1
         const val GLOBAL_PLANE_CLEARANCE = 1
         const val STEINER_MAX_TRACKS = 3

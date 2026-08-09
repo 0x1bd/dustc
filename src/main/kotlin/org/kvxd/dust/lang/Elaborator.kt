@@ -4,7 +4,9 @@ import org.kvxd.dust.Circuit
 import org.kvxd.dust.CircuitPort
 import org.kvxd.dust.CircuitPortDirection
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
+import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
+import org.kvxd.dust.physical.PhysicalIoEdge
 
 internal class Elaborator(
     modules: List<ModuleSyntax>,
@@ -20,7 +22,7 @@ internal class Elaborator(
                 if (port.width == 1) listOf(builder.input(port.name)) else builder.inputBus(port.name, port.width),
             )
         }
-        val outputs = elaborate(module, builder, inputs, listOf(module.name))
+        val outputs = elaborate(module, builder, inputs, listOf(module.name), applyTerminalPlacement = true)
         ports.filter { it.direction == CircuitPortDirection.OUTPUT }.forEach { port ->
             val signals = (outputs.getValue(port.name) as Value.Signals).signals
             if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(port.name, signals)
@@ -42,6 +44,13 @@ internal class Elaborator(
         return module.ports.map { port ->
             if (!names.add(port.name)) fail(port.location, "duplicate port '${port.name}'")
             try {
+                val placement = placementAttributes(port.attributes)
+                if (placement.panel && port.group == null) {
+                    fail(port.location, "#[panel] requires a named top-level I/O group")
+                }
+                if (placement.panel && placement.edge in setOf(InterfaceEdge.EAST, InterfaceEdge.WEST)) {
+                    fail(port.location, "#[panel] currently supports north/south edges; omit #[edge] for automatic panel placement")
+                }
                 CircuitPort(
                     port.name,
                     port.width,
@@ -51,6 +60,8 @@ internal class Elaborator(
                         CircuitPortDirection.OUTPUT
                     },
                     port.group,
+                    placement.edge?.let { PhysicalIoEdge.valueOf(it.name) },
+                    placement.panel,
                 )
             } catch (exception: IllegalArgumentException) {
                 fail(port.location, exception.message ?: "invalid port")
@@ -66,15 +77,23 @@ internal class Elaborator(
         builder: BooleanNetlistBuilder,
         inputs: Map<String, Value>,
         callStack: List<String>,
+        applyTerminalPlacement: Boolean,
     ): Map<String, Value> {
         val environment = Environment()
         inputs.forEach { (name, value) -> environment.bindings[name] = Binding(value, mutable = false) }
+        module.ports.filter { it.direction == PortDirection.INPUT && it.group != null }
+            .groupBy { checkNotNull(it.group) }
+            .forEach { (group, ports) ->
+                environment.placementTargets[group] = Value.Signals(
+                    ports.flatMap { port -> (inputs.getValue(port.name) as Value.Signals).signals },
+                )
+            }
         val outputPorts = module.ports.filter { it.direction == PortDirection.OUTPUT }
         val outputs = outputPorts.associate { port ->
             port.name to OutputBinding(port, MutableList(port.width) { null })
         }
         execute(module.body, environment, outputs, builder, callStack)
-        return outputs.mapValues { (_, output) ->
+        val result = outputs.mapValues { (_, output) ->
             val missing = output.signals.indices.filter { output.signals[it] == null }
             if (missing.isNotEmpty()) {
                 val names = missing.joinToString { bit ->
@@ -84,6 +103,8 @@ internal class Elaborator(
             }
             Value.Signals(output.signals.map(::checkNotNull))
         }
+        if (applyTerminalPlacement) applyPortPlacement(module, builder, inputs + result)
+        return result
     }
 
     private fun execute(
@@ -100,10 +121,22 @@ internal class Elaborator(
                     if (environment.bindings.containsKey(statement.name) || outputs.containsKey(statement.name)) {
                         fail(statement.location, "'${statement.name}' is already declared")
                     }
-                    environment.bindings[statement.name] = Binding(
-                        evaluate(statement.initializer, environment, outputs, builder, callStack),
-                        statement.mutable,
-                    )
+                    if (statement.mutable && statement.attributes.isNotEmpty()) {
+                        fail(statement.location, "placement attributes cannot be attached to a mutable binding")
+                    }
+                    val value = evaluate(statement.initializer, environment, outputs, builder, callStack)
+                    if (statement.attributes.isNotEmpty()) {
+                        val placement = placementAttributes(statement.attributes)
+                        if (placement.edge != null) fail(statement.location, "#[edge] is only supported on top-level I/O")
+                        if (placement.panel) fail(statement.location, "#[panel] is only supported on top-level I/O groups")
+                        val targets = placement.near.flatMapTo(linkedSetOf()) { target ->
+                            val targetValue = environment.find(target)?.value ?: environment.findPlacementTarget(target)
+                            ?: fail(statement.location, "unknown placement target '$target'")
+                            placementSignals(targetValue, statement.location)
+                        }
+                        builder.place(placementSignals(value, statement.location), placement.tier, targets)
+                    }
+                    environment.bindings[statement.name] = Binding(value, statement.mutable)
                 }
                 is AssignmentSyntax -> assign(statement, environment, outputs, builder, callStack)
                 is ForSyntax -> {
@@ -273,7 +306,91 @@ internal class Elaborator(
             }
             port.name to Value.Signals(connected)
         }
-        return Value.Bundle(elaborate(module, builder, bound, callStack + module.name))
+        return Value.Bundle(elaborate(module, builder, bound, callStack + module.name, applyTerminalPlacement = false))
+    }
+
+    private fun applyPortPlacement(
+        module: ModuleSyntax,
+        builder: BooleanNetlistBuilder,
+        values: Map<String, Value>,
+    ) {
+        val targets = values.toMutableMap()
+        module.ports.filter { it.group != null }.groupBy { checkNotNull(it.group) }.forEach { (group, ports) ->
+            targets[group] = Value.Signals(ports.flatMap { port -> placementSignals(values.getValue(port.name), port.location) })
+        }
+        module.ports.forEach { port ->
+            if (port.attributes.isEmpty()) return@forEach
+            val placement = placementAttributes(port.attributes)
+            val near = placement.near.flatMapTo(linkedSetOf()) { target ->
+                val targetValue = targets[target] ?: fail(port.location, "unknown placement target '$target'")
+                placementSignals(targetValue, port.location)
+            }
+            builder.placeTerminals(placementSignals(values.getValue(port.name), port.location), placement.tier, near, placement.edge)
+        }
+    }
+
+    private fun placementAttributes(attributes: List<AttributeSyntax>): PlacementAttributes {
+        var tier: Int? = null
+        var edge: InterfaceEdge? = null
+        var panel = false
+        val near = linkedSetOf<String>()
+        attributes.forEach { attribute ->
+            when (attribute.name) {
+                "tier" -> {
+                    if (tier != null) fail(attribute.location, "duplicate #[tier] attribute")
+                    if (attribute.arguments.size != 1 || attribute.arguments.single().type != TokenType.INT) {
+                        fail(attribute.location, "#[tier] expects one non-negative integer")
+                    }
+                    val token = attribute.arguments.single()
+                    val value = parseAttributeInteger(token)
+                    if (value < 0) fail(token, "tier must be non-negative")
+                    tier = value
+                }
+                "near" -> {
+                    if (attribute.arguments.isEmpty() || attribute.arguments.any { it.type != TokenType.ID }) {
+                        fail(attribute.location, "#[near] expects one or more placement target names")
+                    }
+                    attribute.arguments.forEach { near += it.value }
+                }
+                "edge" -> {
+                    if (edge != null) fail(attribute.location, "duplicate #[edge] attribute")
+                    if (attribute.arguments.size != 1 || attribute.arguments.single().type != TokenType.ID) {
+                        fail(attribute.location, "#[edge] expects one of north, south, east, west")
+                    }
+                    edge = when (val value = attribute.arguments.single().value) {
+                        "north" -> InterfaceEdge.NORTH
+                        "south" -> InterfaceEdge.SOUTH
+                        "east" -> InterfaceEdge.EAST
+                        "west" -> InterfaceEdge.WEST
+                        else -> fail(attribute.arguments.single(), "invalid edge '$value'; expected north, south, east, or west")
+                    }
+                }
+                "panel" -> {
+                    if (panel) fail(attribute.location, "duplicate #[panel] attribute")
+                    if (attribute.arguments.isNotEmpty()) {
+                        fail(attribute.location, "#[panel] does not take arguments")
+                    }
+                    panel = true
+                }
+                else -> fail(attribute.location, "unknown placement attribute '#[${attribute.name}]'")
+            }
+        }
+        return PlacementAttributes(tier, near.toList(), edge, panel)
+    }
+
+    private fun parseAttributeInteger(token: Token): Int {
+        val value = when {
+            token.value.startsWith("0x", ignoreCase = true) -> token.value.drop(2).toIntOrNull(16)
+            token.value.startsWith("0b", ignoreCase = true) -> token.value.drop(2).toIntOrNull(2)
+            else -> token.value.toIntOrNull()
+        }
+        return value ?: fail(token, "integer '${token.value}' does not fit in 32 bits")
+    }
+
+    private fun placementSignals(value: Value, location: Token): List<Signal> = when (value) {
+        is Value.Signals -> value.signals
+        is Value.Bundle -> value.outputs.values.flatMap { placementSignals(it, location) }
+        is Value.Integer -> fail(location, "placement attributes require a signal, bus, or module output bundle")
     }
 
     private fun signals(value: Value, location: Token): List<Signal> =
@@ -299,12 +416,20 @@ internal class Elaborator(
         data class Integer(val value: Int) : Value
     }
 
+    private data class PlacementAttributes(
+        val tier: Int?,
+        val near: List<String>,
+        val edge: InterfaceEdge?,
+        val panel: Boolean,
+    )
     private data class Binding(var value: Value, val mutable: Boolean)
     private data class OutputBinding(val port: PortSyntax, val signals: MutableList<Signal?>)
 
     private class Environment(private val parent: Environment? = null) {
         val bindings: MutableMap<String, Binding> = linkedMapOf()
+        val placementTargets: MutableMap<String, Value> = linkedMapOf()
         fun find(name: String): Binding? = bindings[name] ?: parent?.find(name)
+        fun findPlacementTarget(name: String): Value? = placementTargets[name] ?: parent?.findPlacementTarget(name)
     }
 
     private class ElaborationError : RuntimeException()

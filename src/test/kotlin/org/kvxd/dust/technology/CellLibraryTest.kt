@@ -19,6 +19,7 @@ class CellLibraryTest {
             Triple(Primitive.AND2, listOf("a", "b")) { it[0] && it[1] },
             Triple(Primitive.OR2, listOf("a", "b")) { it[0] || it[1] },
             Triple(Primitive.XOR2, listOf("a", "b")) { it[0] xor it[1] },
+            Triple(Primitive.MUX2, listOf("select", "low", "high")) { if (it[0]) it[2] else it[1] },
         )
         cases.forEach { (primitive, names, expected) ->
             val netlist = booleanNetlist(primitive.name.lowercase()) {
@@ -28,6 +29,7 @@ class CellLibraryTest {
                     Primitive.AND2 -> and(inputs[0], inputs[1])
                     Primitive.OR2 -> or(inputs[0], inputs[1])
                     Primitive.XOR2 -> xor(inputs[0], inputs[1])
+                    Primitive.MUX2 -> mux(inputs[0], inputs[1], inputs[2])
                     Primitive.LATCH -> error("sequential")
                 }
                 output("y", out)

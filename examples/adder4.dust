@@ -1,9 +1,11 @@
 module adder4(
+    #[panel]
     input operands {
         a: bits<4>,
         b: bits<4>,
         cin: bit,
     },
+    #[panel]
     output result {
         sum: bits<4>,
         cout: bit,

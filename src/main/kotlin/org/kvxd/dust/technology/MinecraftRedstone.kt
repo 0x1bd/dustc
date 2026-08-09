@@ -20,12 +20,19 @@ object MinecraftRedstone {
 
     val technology: RedstoneTechnology = technology()
 
-    fun technology(isolation: Int = 1, planeSeparation: Int = 2): RedstoneTechnology = RedstoneTechnology(
+    fun technology(isolation: Int = 1, planeSeparation: Int = 2): RedstoneTechnology {
+        val not = notCell()
+        val and = andCell()
+        val or = orCell()
+        val xor = xorCell()
+        val mux = muxCell(not, and, or)
+        return RedstoneTechnology(
         primitives = mapOf(
-            Primitive.NOT to notCell(),
-            Primitive.AND2 to andCell(),
-            Primitive.OR2 to orCell(),
-            Primitive.XOR2 to xorCell(),
+            Primitive.NOT to not,
+            Primitive.AND2 to and,
+            Primitive.OR2 to or,
+            Primitive.XOR2 to xor,
+            Primitive.MUX2 to mux,
             Primitive.LATCH to latchCell(),
         ),
         debugInputPad = inputPad(),
@@ -40,6 +47,7 @@ object MinecraftRedstone {
         lowerPlaneY = 1,
         viaSignalOffsets = List(planeSeparation + 1) { step -> BlockPos(0, step, -step) },
     )
+    }
 
     private fun notCell(): StandardCell = cell(
         name = "not",
@@ -129,6 +137,91 @@ object MinecraftRedstone {
             ),
         ),
     )
+
+    private fun muxCell(not: StandardCell, and: StandardCell, or: StandardCell): StandardCell {
+        val blocks = LinkedHashMap<BlockPos, BlockState>()
+
+        fun put(pos: BlockPos, state: BlockState) {
+            val previous = blocks.putIfAbsent(pos, state)
+            require(previous == null || previous == state) { "mux2 internal overlap at $pos: $previous vs $state" }
+        }
+
+        fun place(subcell: StandardCell, origin: BlockPos) {
+            subcell.blocks.forEach { (local, state) -> put(origin + local, state) }
+        }
+
+        fun signal(pos: BlockPos, state: BlockState = dust) {
+            val support = pos.offset(Direction.DOWN)
+            val previousSupport = blocks[support]
+            when {
+                previousSupport == null -> put(support, cellSupport)
+                previousSupport.type.isSolid -> Unit
+                else -> error("mux2 route at $pos lacks solid support; found $previousSupport at $support")
+            }
+            put(pos, state)
+        }
+
+        place(not, BlockPos(0, 0, 1))
+        place(and, BlockPos(5, 0, 0))
+        place(or, BlockPos(13, 0, 2))
+        place(and, BlockPos(20, 0, 0))
+        listOf(BlockPos(3, 1, 4), BlockPos(4, 1, 4)).forEach(::signal)
+        listOf(BlockPos(11, 1, 4), BlockPos(12, 1, 4)).forEach(::signal)
+
+        listOf(0, 7, 22).forEach { x ->
+            for (z in 5..8) {
+                signal(BlockPos(x, 1, z), if (z == 7) northRepeater else dust)
+            }
+        }
+        for (z in 5..8) {
+            signal(BlockPos(17, 1, z), if (z == 7) RedstoneBlocks.repeater(Direction.SOUTH) else dust)
+        }
+
+        listOf(
+            BlockPos(1, 2, 6),
+            BlockPos(2, 3, 6),
+            BlockPos(3, 4, 6),
+            BlockPos(3, 4, 7),
+            BlockPos(3, 4, 8),
+        ).forEach(::signal)
+        for (x in 4..20) {
+            signal(BlockPos(x, 4, 8), if (x == 12) eastRepeater else dust)
+        }
+        listOf(
+            BlockPos(20, 3, 7),
+            BlockPos(20, 2, 6),
+            BlockPos(20, 1, 5),
+        ).forEach(::signal)
+
+        signal(BlockPos(25, 1, 5), RedstoneBlocks.repeater(Direction.SOUTH))
+        signal(BlockPos(25, 1, 6))
+        listOf(
+            BlockPos(24, 2, 6),
+            BlockPos(23, 3, 6),
+            BlockPos(22, 4, 6),
+            BlockPos(21, 5, 6),
+            BlockPos(20, 6, 6),
+            BlockPos(19, 7, 6),
+            BlockPos(18, 6, 6),
+            BlockPos(17, 5, 6),
+            BlockPos(16, 4, 6),
+            BlockPos(15, 3, 6),
+            BlockPos(15, 2, 5),
+        ).forEach(::signal)
+
+        return StandardCell(
+            "mux2",
+            BuiltinCells.mux2,
+            CellSize(26, 8, 9),
+            listOf(
+                CellPin("select", PinDirection.INPUT, BlockPos(0, 1, 8)),
+                CellPin("low", PinDirection.INPUT, BlockPos(7, 1, 8)),
+                CellPin("high", PinDirection.INPUT, BlockPos(22, 1, 8)),
+                CellPin("y", PinDirection.OUTPUT, BlockPos(17, 1, 8), driveStrength = 14),
+            ),
+            blocks.entries.map { it.key to it.value },
+        )
+    }
 
     private fun latchCell(): StandardCell = cell(
         name = "latch",
