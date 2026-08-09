@@ -18,18 +18,6 @@ file.
 
 ## Language
 
-| Construct                | Meaning                                           |
-|--------------------------|---------------------------------------------------|
-| `bit`                    | One signal                                        |
-| `bits<8>`                | Eight-bit bus, least-significant bit at index 0   |
-| `&`, `                   | `, `^`, `~`                                       | AND, OR, XOR, NOT |
-| `let x = expression`     | Named signal expression                           |
-| `let mut x = expression` | Rebindable elaboration value                      |
-| `for i in 0..8 { ... }`  | Eight copies of the enclosed hardware             |
-| `mux(select, low, high)` | Equal-width multiplexer                           |
-| `latch(data, hold)`      | One-bit active-low-hold latch                     |
-| `module_name(a, b)`      | Inline module instance returning an output bundle |
-
 See [language reference](docs/language.md) for the complete syntax.
 
 ## Editor support
@@ -37,3 +25,8 @@ See [language reference](docs/language.md) for the complete syntax.
 [`editors/vscode`](editors/vscode) is a VS Code / VSCodium extension: `.dust` highlighting,
 snippets, and a build command that reports `dustc` errors inline. It downloads a release binary for
 you, so no toolchain is needed to use it. Tagged releases attach the packaged `dust-vscode.vsix`.
+
+## LLM disclosure
+
+A substantial amount of dustc was developed with the help of LLMs. The project is still directed, tested, and evaluated
+by a human.
