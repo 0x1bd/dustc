@@ -1,11 +1,11 @@
 package org.kvxd.dust.timing
 
-import org.kvxd.dust.cell.PortDirection
-import org.kvxd.dust.cell.TimingConstraint
+import org.kvxd.dust.cell.definition.PortDirection
+import org.kvxd.dust.cell.timing.TimingConstraint
 import org.kvxd.dust.netlist.CellInstance
 import org.kvxd.dust.netlist.Signal
-import org.kvxd.dust.physical.PhysicalDesign
-import org.kvxd.dust.physical.PlacedCell
+import org.kvxd.dust.physical.design.PhysicalDesign
+import org.kvxd.dust.physical.design.PlacedCell
 
 object StaticTiming {
     fun analyse(design: PhysicalDesign): TimingReport {
@@ -85,9 +85,9 @@ object StaticTiming {
         return walk
     }
 
-    private val org.kvxd.dust.cell.TimingArc.minDelay: Int
+    private val org.kvxd.dust.cell.timing.TimingArc.minDelay: Int
         get() = minOf(rise.minTicks, fall.minTicks)
-    private val org.kvxd.dust.cell.TimingArc.maxDelay: Int
+    private val org.kvxd.dust.cell.timing.TimingArc.maxDelay: Int
         get() = maxOf(rise.maxTicks, fall.maxTicks)
 
     private fun portArrival(

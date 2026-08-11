@@ -4,14 +4,14 @@ import java.nio.file.Files
 import java.nio.file.Path
 import org.kvxd.dust.emit.SchematicWriter
 import org.kvxd.dust.physical.PhysicalCompiler
-import org.kvxd.dust.physical.PhysicalDesign
-import org.kvxd.dust.physical.PhysicalIo
-import org.kvxd.dust.physical.PhysicalIoDirection
-import org.kvxd.dust.physical.PhysicalIoGroup
-import org.kvxd.dust.physical.PhysicalIoLayout
-import org.kvxd.dust.physical.PhysicalProgressEvent
-import org.kvxd.dust.physical.PhysicalProgressListener
-import org.kvxd.dust.physical.PhysicalProgressStage
+import org.kvxd.dust.physical.design.PhysicalDesign
+import org.kvxd.dust.physical.io.PhysicalIo
+import org.kvxd.dust.physical.io.PhysicalIoDirection
+import org.kvxd.dust.physical.io.PhysicalIoGroup
+import org.kvxd.dust.physical.io.PhysicalIoLayout
+import org.kvxd.dust.physical.progress.PhysicalProgressEvent
+import org.kvxd.dust.physical.progress.PhysicalProgressListener
+import org.kvxd.dust.physical.progress.PhysicalProgressStage
 import org.kvxd.dust.technology.MinecraftRedstone
 import org.kvxd.dust.technology.RedstoneTechnology
 

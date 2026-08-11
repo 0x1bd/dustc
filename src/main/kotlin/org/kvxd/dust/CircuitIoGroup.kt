@@ -1,6 +1,6 @@
 package org.kvxd.dust
 
-import org.kvxd.dust.physical.PhysicalIoEdge
+import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 data class CircuitIoGroup(
     val name: String?,

@@ -8,9 +8,9 @@ import kotlin.io.path.walk
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import org.kvxd.dust.device.ComparatorMode
-import org.kvxd.dust.device.Direction
-import org.kvxd.dust.device.Properties
+import org.kvxd.dust.device.redstone.ComparatorMode
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
 
 class RedstoneBlocksTest {
     @Test

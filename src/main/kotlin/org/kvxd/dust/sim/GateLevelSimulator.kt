@@ -1,16 +1,16 @@
 package org.kvxd.dust.sim
 
-import org.kvxd.dust.device.AttachFace
-import org.kvxd.dust.device.BlockMatrix
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.device.BlockType
-import org.kvxd.dust.device.ComponentKind
-import org.kvxd.dust.device.Direction
-import org.kvxd.dust.device.Properties
-import org.kvxd.dust.device.Redstone
-import org.kvxd.dust.device.Scheduling
-import org.kvxd.dust.device.TickPriority
+import org.kvxd.dust.device.redstone.AttachFace
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.block.BlockType
+import org.kvxd.dust.device.block.ComponentKind
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
+import org.kvxd.dust.device.redstone.Redstone
+import org.kvxd.dust.device.redstone.Scheduling
+import org.kvxd.dust.device.redstone.TickPriority
 
 class GateLevelSimulator(private val matrix: BlockMatrix) {
 
@@ -30,7 +30,7 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
 
     private val pendingCounts = HashMap<Int, Int>()
 
-    private val world = object : org.kvxd.dust.device.BlockAccess {
+    private val world = object : org.kvxd.dust.device.block.BlockAccess {
         override fun blockAt(pos: BlockPos): BlockState = stateAt(pos)
         override fun blockEntityAt(pos: BlockPos) = matrix.blockEntityAt(pos)
         override fun analogOutputAt(pos: BlockPos): Int? = toLocal(pos)?.let { analogOutputs[it] }

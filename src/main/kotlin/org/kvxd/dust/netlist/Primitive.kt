@@ -1,7 +1,7 @@
 package org.kvxd.dust.netlist
 
-import org.kvxd.dust.cell.BuiltinCells
-import org.kvxd.dust.cell.CellType
+import org.kvxd.dust.cell.definition.CellType
+import org.kvxd.dust.cell.library.BuiltinCells
 
 enum class Primitive(val cellType: CellType) {
     NOT(BuiltinCells.not),

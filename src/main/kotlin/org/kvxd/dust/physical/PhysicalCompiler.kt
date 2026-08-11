@@ -3,16 +3,27 @@ package org.kvxd.dust.physical
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.sqrt
-import org.kvxd.dust.device.BlockMatrix
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.device.ComponentKind
-import org.kvxd.dust.device.Direction
-import org.kvxd.dust.device.Properties
-import org.kvxd.dust.device.SignBlockEntity
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.block.ComponentKind
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
+import org.kvxd.dust.device.block.SignBlockEntity
 import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
+import org.kvxd.dust.physical.design.PhysicalDesign
+import org.kvxd.dust.physical.design.PlacedCell
+import org.kvxd.dust.physical.design.RoutedNet
+import org.kvxd.dust.physical.io.PhysicalIo
+import org.kvxd.dust.physical.io.PhysicalIoDirection
+import org.kvxd.dust.physical.io.PhysicalIoEdge
+import org.kvxd.dust.physical.io.PhysicalIoGroup
+import org.kvxd.dust.physical.io.PhysicalIoLayout
+import org.kvxd.dust.physical.progress.PhysicalProgressEvent
+import org.kvxd.dust.physical.progress.PhysicalProgressListener
+import org.kvxd.dust.physical.progress.PhysicalProgressStage
 import org.kvxd.dust.technology.CellPin
 import org.kvxd.dust.technology.MinecraftRedstone
 import org.kvxd.dust.technology.PinDirection
@@ -422,12 +433,12 @@ class PhysicalCompiler(
     private fun signalCriticality(netlist: BooleanNetlist): IntArray {
         val remaining = IntArray(netlist.signals)
         netlist.instances.asReversed().forEach { instance ->
-            val outputs = instance.type.ports.filter { it.direction == org.kvxd.dust.cell.PortDirection.OUTPUT }
+            val outputs = instance.type.ports.filter { it.direction == org.kvxd.dust.cell.definition.PortDirection.OUTPUT }
                 .flatMap { instance.connections.getValue(it.name) }
             val latency = instance.type.timing.arcs.maxOfOrNull {
                 maxOf(it.rise.maxTicks, it.fall.maxTicks)
             } ?: 0
-            instance.type.ports.filter { it.direction == org.kvxd.dust.cell.PortDirection.INPUT }.forEach { port ->
+            instance.type.ports.filter { it.direction == org.kvxd.dust.cell.definition.PortDirection.INPUT }.forEach { port ->
                 instance.connections.getValue(port.name).forEach { input ->
                     remaining[input.index] = maxOf(
                         remaining[input.index],

@@ -1,7 +1,7 @@
 package org.kvxd.dust.netlist
 
-import org.kvxd.dust.cell.CellType
-import org.kvxd.dust.cell.PortDirection
+import org.kvxd.dust.cell.definition.CellType
+import org.kvxd.dust.cell.definition.PortDirection
 
 class BooleanNetlistBuilder internal constructor(private val name: String) {
     private val inputs = linkedMapOf<String, Signal>()

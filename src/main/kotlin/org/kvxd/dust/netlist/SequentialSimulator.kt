@@ -1,7 +1,7 @@
 package org.kvxd.dust.netlist
 
-import org.kvxd.dust.cell.CellBehavior
-import org.kvxd.dust.cell.PortDirection
+import org.kvxd.dust.cell.behavior.CellBehavior
+import org.kvxd.dust.cell.definition.PortDirection
 
 class SequentialSimulator(private val netlist: BooleanNetlist) {
     private val state: BooleanArray = BooleanArray(netlist.signals)

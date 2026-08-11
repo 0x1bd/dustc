@@ -1,12 +1,12 @@
 package org.kvxd.dust.technology
 
-import org.kvxd.dust.device.AttachFace
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.device.BlockType
-import org.kvxd.dust.device.ComparatorMode
-import org.kvxd.dust.device.Direction
-import org.kvxd.dust.device.Properties
-import org.kvxd.dust.device.WireSides
+import org.kvxd.dust.device.redstone.AttachFace
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.block.BlockType
+import org.kvxd.dust.device.redstone.ComparatorMode
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
+import org.kvxd.dust.device.redstone.WireSides
 
 object RedstoneBlocks {
 

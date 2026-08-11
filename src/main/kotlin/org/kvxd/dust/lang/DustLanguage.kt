@@ -1,6 +1,10 @@
 package org.kvxd.dust.lang
 
 import org.kvxd.dust.Circuit
+import org.kvxd.dust.lang.diagnostic.DiagnosticReporter
+import org.kvxd.dust.lang.elaboration.Elaborator
+import org.kvxd.dust.lang.lexing.SourceFile
+import org.kvxd.dust.lang.parsing.Parser
 
 object DustLanguage {
     fun compile(source: String, sourceName: String = "<source>", color: Boolean = false): List<Circuit> {

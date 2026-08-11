@@ -1,8 +1,8 @@
 package org.kvxd.dust.technology
 
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.cell.CellType
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.cell.definition.CellType
 
 class StandardCell internal constructor(
     val name: String,

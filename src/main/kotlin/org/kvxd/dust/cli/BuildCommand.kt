@@ -3,7 +3,7 @@ package org.kvxd.dust.cli
 import java.nio.file.Path
 import java.util.concurrent.Callable
 import org.kvxd.dust.compile
-import org.kvxd.dust.physical.PhysicalIo
+import org.kvxd.dust.physical.io.PhysicalIo
 import picocli.CommandLine.Command
 import picocli.CommandLine.Option
 import picocli.CommandLine.Parameters

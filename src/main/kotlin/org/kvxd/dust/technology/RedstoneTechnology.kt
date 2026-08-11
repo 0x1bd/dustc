@@ -1,12 +1,12 @@
 package org.kvxd.dust.technology
 
-import org.kvxd.dust.device.BlockMatrix
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.device.Direction
-import org.kvxd.dust.device.Properties
-import org.kvxd.dust.device.Redstone
-import org.kvxd.dust.cell.CellTypeId
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
+import org.kvxd.dust.device.redstone.Redstone
+import org.kvxd.dust.cell.definition.CellTypeId
 import org.kvxd.dust.netlist.Primitive
 
 class RedstoneTechnology internal constructor(

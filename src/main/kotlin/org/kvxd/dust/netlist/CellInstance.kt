@@ -1,6 +1,6 @@
 package org.kvxd.dust.netlist
 
-import org.kvxd.dust.cell.CellType
+import org.kvxd.dust.cell.definition.CellType
 
 data class CellInstance(
     val name: String,

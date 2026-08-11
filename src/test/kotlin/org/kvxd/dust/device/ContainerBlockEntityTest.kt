@@ -2,6 +2,13 @@ package org.kvxd.dust.device
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.block.BlockType
+import org.kvxd.dust.device.block.ContainerBlockEntity
+import org.kvxd.dust.device.block.SignBlockEntity
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
 import org.kvxd.dust.emit.SchematicReader
 import org.kvxd.dust.emit.SchematicWriter
 

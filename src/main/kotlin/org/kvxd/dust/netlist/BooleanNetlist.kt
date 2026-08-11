@@ -1,6 +1,6 @@
 package org.kvxd.dust.netlist
 
-import org.kvxd.dust.cell.PortDirection
+import org.kvxd.dust.cell.definition.PortDirection
 
 class BooleanNetlist internal constructor(
     val name: String,

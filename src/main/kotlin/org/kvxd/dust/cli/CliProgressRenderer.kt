@@ -2,9 +2,9 @@ package org.kvxd.dust.cli
 
 import java.io.PrintWriter
 import kotlin.math.roundToInt
-import org.kvxd.dust.physical.PhysicalProgressEvent
-import org.kvxd.dust.physical.PhysicalProgressListener
-import org.kvxd.dust.physical.PhysicalProgressStage
+import org.kvxd.dust.physical.progress.PhysicalProgressEvent
+import org.kvxd.dust.physical.progress.PhysicalProgressListener
+import org.kvxd.dust.physical.progress.PhysicalProgressStage
 
 internal class CliProgressRenderer(
     private val out: PrintWriter,

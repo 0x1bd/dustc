@@ -3,6 +3,14 @@ package org.kvxd.dust.device
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.block.BlockType
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
+import org.kvxd.dust.device.redstone.AttachFace
+import org.kvxd.dust.device.redstone.Redstone
+import org.kvxd.dust.device.redstone.WireSides
 import org.kvxd.dust.sim.GateLevelSimulator
 
 class RedstoneTowerTest {

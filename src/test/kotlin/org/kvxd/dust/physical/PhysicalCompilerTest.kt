@@ -1,8 +1,8 @@
 package org.kvxd.dust.physical
 
 import kotlin.math.abs
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockType
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockType
 import org.kvxd.dust.lang.DustLanguage
 import org.kvxd.dust.netlist.booleanNetlist
 import org.kvxd.dust.sim.GateLevelSimulator

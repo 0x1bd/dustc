@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.kvxd.dust.compile
-import org.kvxd.dust.physical.PhysicalIoEdge
+import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 class DustLanguageTest {
     @Test

@@ -1,6 +1,6 @@
 package org.kvxd.dust.technology
 
-import org.kvxd.dust.device.BlockPos
+import org.kvxd.dust.device.geometry.BlockPos
 
 data class CellPin(
     val name: String,

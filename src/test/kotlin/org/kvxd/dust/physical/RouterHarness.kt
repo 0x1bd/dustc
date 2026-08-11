@@ -1,7 +1,7 @@
 package org.kvxd.dust.physical
 
 import kotlin.random.Random
-import org.kvxd.dust.device.ComponentKind
+import org.kvxd.dust.device.block.ComponentKind
 import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.Signal
 import org.kvxd.dust.netlist.booleanNetlist
@@ -48,7 +48,7 @@ object RouterHarness {
                 }
             }
         design.matrix.forEachPosition { x, y, z, state ->
-            if (org.kvxd.dust.device.BlockPos(x, y, z) in interfaceNodes) return@forEachPosition
+            if (org.kvxd.dust.device.geometry.BlockPos(x, y, z) in interfaceNodes) return@forEachPosition
             when (state.type.component) {
                 ComponentKind.REPEATER -> repeaters++
                 ComponentKind.TORCH -> torches++

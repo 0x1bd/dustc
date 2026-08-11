@@ -1,9 +1,9 @@
 package org.kvxd.dust.technology
 
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.device.Direction
-import org.kvxd.dust.device.Properties
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.device.property.Properties
 
 enum class CellOrientation(private val clockwiseTurns: Int) {
     SOUTH(0),

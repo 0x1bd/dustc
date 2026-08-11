@@ -1,5 +1,5 @@
 package org.kvxd.dust.sim
 
-import org.kvxd.dust.device.TickPriority
+import org.kvxd.dust.device.redstone.TickPriority
 
 internal data class PendingTick(val dueAt: Int, val priority: TickPriority, val index: Int, val sequence: Long)

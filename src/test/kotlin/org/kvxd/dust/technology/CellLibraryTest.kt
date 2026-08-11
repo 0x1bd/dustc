@@ -3,10 +3,10 @@ package org.kvxd.dust.technology
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockType
-import org.kvxd.dust.device.ComponentKind
-import org.kvxd.dust.device.Properties
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockType
+import org.kvxd.dust.device.block.ComponentKind
+import org.kvxd.dust.device.property.Properties
 import org.kvxd.dust.netlist.Primitive
 import org.kvxd.dust.physical.PhysicalCompiler
 import org.kvxd.dust.netlist.booleanNetlist

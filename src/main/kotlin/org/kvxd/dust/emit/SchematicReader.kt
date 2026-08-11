@@ -4,12 +4,12 @@ import net.kyori.adventure.nbt.BinaryTagIO
 import net.kyori.adventure.nbt.BinaryTagTypes
 import net.kyori.adventure.nbt.CompoundBinaryTag
 import net.kyori.adventure.nbt.StringBinaryTag
-import org.kvxd.dust.device.BlockMatrix
-import org.kvxd.dust.device.BlockPos
-import org.kvxd.dust.device.BlockState
-import org.kvxd.dust.device.ContainerBlockEntity
-import org.kvxd.dust.device.ItemStack
-import org.kvxd.dust.device.SignBlockEntity
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.block.ContainerBlockEntity
+import org.kvxd.dust.device.block.ItemStack
+import org.kvxd.dust.device.block.SignBlockEntity
 
 class SchematicReader {
     fun read(bytes: ByteArray): BlockMatrix {
