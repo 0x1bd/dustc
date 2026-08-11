@@ -2,6 +2,8 @@ package org.kvxd.dust.physical
 
 import kotlin.random.Random
 import org.kvxd.dust.device.block.ComponentKind
+import org.kvxd.dust.physical.design.PhysicalDesign
+import org.kvxd.dust.physical.design.PlacedCell
 import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.Signal
 import org.kvxd.dust.netlist.booleanNetlist

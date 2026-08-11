@@ -1,0 +1,22 @@
+cell and2
+
+palette:
+# = support
++ = dust
+^ = torch-north
+V = torch-south
+
+pins:
+a input @0,1,2 abut=false required=1
+b input @2,1,2 abut=false required=1
+y output @4,1,2 drive=15
+
+layers:
+@0
+####.
+.....
+....#
+@1
+++++#
+^.^.V
+#.#.+

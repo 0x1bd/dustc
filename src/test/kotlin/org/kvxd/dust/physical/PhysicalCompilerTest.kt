@@ -5,6 +5,14 @@ import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.block.BlockType
 import org.kvxd.dust.lang.DustLanguage
 import org.kvxd.dust.netlist.booleanNetlist
+import org.kvxd.dust.physical.io.PhysicalIo
+import org.kvxd.dust.physical.io.PhysicalIoDirection
+import org.kvxd.dust.physical.io.PhysicalIoEdge
+import org.kvxd.dust.physical.io.PhysicalIoGroup
+import org.kvxd.dust.physical.io.PhysicalIoLayout
+import org.kvxd.dust.physical.progress.PhysicalProgressEvent
+import org.kvxd.dust.physical.progress.PhysicalProgressListener
+import org.kvxd.dust.physical.progress.PhysicalProgressStage
 import org.kvxd.dust.sim.GateLevelSimulator
 import kotlin.test.Test
 import kotlin.test.assertEquals

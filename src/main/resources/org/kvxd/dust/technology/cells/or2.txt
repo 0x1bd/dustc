@@ -1,0 +1,21 @@
+cell or2
+
+palette:
+# = support
++ = dust
+N = repeater-north
+
+pins:
+a input @0,1,2 required=1
+b input @2,1,2 required=1
+y output @4,1,2 drive=9
+
+layers:
+@0
+#####
+#.#.#
+#.#.#
+@1
++++++
+N.N.+
++.+.+

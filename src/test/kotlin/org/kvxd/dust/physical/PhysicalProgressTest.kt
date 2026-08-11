@@ -2,6 +2,9 @@ package org.kvxd.dust.physical
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import org.kvxd.dust.physical.progress.PhysicalProgressEvent
+import org.kvxd.dust.physical.progress.PhysicalProgressListener
+import org.kvxd.dust.physical.progress.PhysicalProgressStage
 import kotlin.test.assertTrue
 import org.kvxd.dust.netlist.booleanNetlist
 

@@ -1,0 +1,73 @@
+cell mux2
+
+pins:
+select input @0,1,6
+low input @7,1,6
+high input @22,1,6
+y output @17,1,6 drive=15
+
+layout:
+include not @0,0,1
+include and2 @5,0,0
+include or2 @13,0,0
+include and2 @20,0,0
+wire dust @3,1,2
+wire dust @4,1,2
+wire dust @10,1,2
+wire dust @11,1,2
+wire dust @12,1,2
+wire dust @0,1,3
+wire dust @0,1,4
+wire repeater-north @0,1,5
+wire dust @0,1,6
+wire dust @7,1,3
+wire dust @7,1,4
+wire repeater-north @7,1,5
+wire dust @7,1,6
+wire dust @22,1,3
+wire dust @22,1,4
+wire repeater-north @22,1,5
+wire dust @22,1,6
+wire dust @17,1,3
+wire dust @17,1,4
+wire repeater-south @17,1,5
+wire dust @17,1,6
+wire dust @1,2,4
+wire dust @2,3,4
+wire dust @3,4,4
+wire dust @3,4,5
+wire dust @3,4,6
+wire dust @4,4,6
+wire dust @5,4,6
+wire dust @6,4,6
+wire dust @7,4,6
+wire dust @8,4,6
+wire dust @9,4,6
+wire dust @10,4,6
+wire dust @11,4,6
+wire repeater-east @12,4,6
+wire dust @13,4,6
+wire dust @14,4,6
+wire dust @15,4,6
+wire dust @16,4,6
+wire dust @17,4,6
+wire dust @18,4,6
+wire dust @19,4,6
+wire dust @20,4,6
+wire dust @20,3,5
+wire dust @20,2,4
+wire dust @20,1,3
+wire dust @25,1,2
+wire repeater-south @25,1,3
+wire dust @25,1,4
+wire dust @24,2,4
+wire dust @23,3,4
+wire dust @22,4,4
+wire dust @21,5,4
+wire dust @20,6,4
+wire dust @19,7,4
+wire dust @18,6,4
+wire dust @17,5,4
+wire dust @16,4,4
+wire dust @15,3,4
+wire dust @15,2,3

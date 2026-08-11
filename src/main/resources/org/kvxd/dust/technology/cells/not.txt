@@ -1,0 +1,18 @@
+cell not
+
+palette:
+# = support
++ = dust
+> = torch-east
+
+pins:
+a input @0,1,1 abut=false required=1
+y output @2,1,1 drive=13
+
+layers:
+@0
+..#
+#.#
+@1
+#>+
++.+

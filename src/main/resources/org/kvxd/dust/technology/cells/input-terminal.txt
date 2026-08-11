@@ -1,0 +1,14 @@
+cell input-terminal
+
+palette:
+# = support
++ = dust
+
+pins:
+y output @0,1,0
+
+layers:
+@0
+#
+@1
++

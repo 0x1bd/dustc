@@ -1,0 +1,14 @@
+cell output-terminal
+
+palette:
+g = glass
++ = dust
+
+pins:
+a input @0,3,0 abut=false south=true branch=1
+
+layers:
+@2
+g.
+@3
++.

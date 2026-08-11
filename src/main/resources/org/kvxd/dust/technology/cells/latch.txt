@@ -1,0 +1,22 @@
+cell latch
+
+palette:
+# = support
++ = dust
+E = repeater-east
+N = repeater-north
+
+pins:
+d input @0,1,2 required=4
+hold input @2,1,2 required=1
+q output @4,1,2 drive=12
+
+layers:
+@0
+#####
+#.#.#
+#.#.#
+@1
+++E++
++.N.+
++.+.+
