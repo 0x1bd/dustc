@@ -4,6 +4,7 @@ import org.kvxd.dust.device.block.BlockMatrix
 import org.kvxd.dust.device.block.BlockState
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.technology.definition.CellDefinitionLoader
 
 object MinecraftRedstone {
     private val cells = CellDefinitionLoader(

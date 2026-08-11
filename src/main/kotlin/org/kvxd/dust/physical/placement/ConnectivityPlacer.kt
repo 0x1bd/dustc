@@ -1,4 +1,4 @@
-package org.kvxd.dust.physical
+package org.kvxd.dust.physical.placement
 
 import java.util.PriorityQueue
 import kotlin.math.abs
