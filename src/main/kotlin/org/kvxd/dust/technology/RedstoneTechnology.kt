@@ -58,6 +58,7 @@ class RedstoneTechnology internal constructor(
 
     fun placeCell(matrix: BlockMatrix, cell: StandardCell, origin: BlockPos) {
         cell.blocks.forEach { (local, state) -> matrix.placeChecked(origin + local, state) }
+        cell.blockEntities.forEach { (local, blockEntity) -> matrix.setBlockEntityAt(origin + local, blockEntity) }
     }
 
     private fun validateCell(cell: StandardCell) {

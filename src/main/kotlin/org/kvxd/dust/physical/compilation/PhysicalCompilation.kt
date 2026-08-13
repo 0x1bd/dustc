@@ -119,6 +119,9 @@ internal class PhysicalCompilation(
             plan.rows.maxOf { it.routes.maxOfOrNull { route -> route.lane + 1 } ?: 0 },
             plan.globalTracks.map { it.signal }.distinct().size,
             delays,
+            plan.cells.flatMap { cell ->
+                cell.observations.map { (name, position) -> "${cell.name}.$name" to position }
+            }.toMap(),
         )
     }
 

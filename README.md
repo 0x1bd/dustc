@@ -184,6 +184,7 @@ module inverter(
 Dust supports buses, Boolean operators, compile-time loops, local bindings, module composition, multiplexers, latches, and physical placement attributes such as `#[near(...)]`, `#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
 
 See the [language reference](docs/language.md) for the complete syntax and semantics.
+The physical-cell format is documented in [text cell definitions](docs/cell-definitions.md).
 
 Contributor conventions are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

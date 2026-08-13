@@ -17,4 +17,5 @@ data class PhysicalDesign(
     val laneCount: Int,
     val globalNetCount: Int,
     val routeDelayTicks: Map<BlockPos, Int>,
+    val observations: Map<String, BlockPos> = emptyMap(),
 )

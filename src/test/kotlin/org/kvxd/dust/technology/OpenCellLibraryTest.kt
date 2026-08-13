@@ -122,6 +122,7 @@ class OpenCellLibraryTest {
                         exclusiveRow = true,
                         visibleEdge = InterfaceEdge.NORTH,
                     ),
+                    observations = listOf(CellObservation("output", template.pin("y").position)),
                 )
             },
         )
@@ -145,6 +146,8 @@ class OpenCellLibraryTest {
         val placed = design.cells.single { it.name == "hard-buffer" }
         assertEquals(0, placed.row, "a north-facing hard macro must occupy the outermost row")
         assertEquals(1, design.cells.count { it.row == placed.row }, "an exclusive hard macro must own its row")
+        assertEquals(placed.pin("y"), placed.observations.getValue("output"))
+        assertEquals(placed.pin("y"), design.observations.getValue("hard-buffer.output"))
 
         val simulator = GateLevelSimulator(design.matrix)
         val bound = design.matrix.blockCount()

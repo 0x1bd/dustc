@@ -37,7 +37,7 @@ object MinecraftRedstone {
             "lever-floor" to RedstoneBlocks.floorLever,
             "lamp" to RedstoneBlocks.lamp,
         ),
-        logicalType = { name -> logicalTypes.getValue(name) },
+        logicalType = { name, _ -> logicalTypes.getValue(name) },
     )
 
     private val cellLibrary = CellLibrary(

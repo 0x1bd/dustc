@@ -12,4 +12,7 @@ data class PlacedCell(
     val nets: Map<String, Signal>,
 ) {
     fun pin(name: String): BlockPos = origin + cell.pin(name).position
+
+    val observations: Map<String, BlockPos>
+        get() = cell.observations.associate { it.name to origin + it.position }
 }

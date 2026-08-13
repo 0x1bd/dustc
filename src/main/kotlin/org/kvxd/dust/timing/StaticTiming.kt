@@ -22,7 +22,7 @@ object StaticTiming {
 
             design.netlist.instances.forEach { instance ->
                 val cell = cells[instance.name] ?: return@forEach
-                instance.type.timing.constraints.forEach { constraint ->
+                cell.cell.timing.constraints.forEach { constraint ->
                     when (constraint) {
                         is TimingConstraint.SetupHold -> {
                             val data = portArrival(design, walk, instance, cell, constraint.dataPort, earliest = true)
@@ -61,7 +61,7 @@ object StaticTiming {
                     val outputSignal = instance.connections.getValue(outputPort.name)[outputBit]
                     var earliest = Int.MAX_VALUE
                     var latest = Int.MIN_VALUE
-                    instance.type.timing.arcs.filter { arc ->
+                    cell.cell.timing.arcs.filter { arc ->
                         arc.toPort == outputPort.name && (arc.toBit == null || arc.toBit == outputBit)
                     }.forEach { arc ->
                         val inputPort = instance.type.port(arc.fromPort)

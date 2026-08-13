@@ -1,0 +1,15 @@
+cell generated-test<WIDTH: int in 1..3 = 1>
+
+palette:
+# = support
+
+pins:
+for x in 0..WIDTH {
+    a[x] input @(x * 2),1,1
+    y[x] output @((WIDTH + x) * 2),1,1
+}
+
+layout:
+for x in 0..(WIDTH * 4) {
+    block # @x,0,0
+}
