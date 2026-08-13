@@ -185,6 +185,8 @@ Dust supports buses, Boolean operators, compile-time loops, local bindings, modu
 
 See the [language reference](docs/language.md) for the complete syntax and semantics.
 
+Contributor conventions are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## LLM disclosure
 
 A substantial amount of dustc was developed with the help of LLMs. The project is still directed, tested, and evaluated

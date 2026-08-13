@@ -9,7 +9,9 @@ import org.kvxd.dust.device.block.SignBlockEntity
 import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
+import org.kvxd.dust.cell.definition.PortDirection
 import org.kvxd.dust.physical.design.PlacedCell
+import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.physical.io.PhysicalIo
 import org.kvxd.dust.physical.io.PhysicalIoDirection
 import org.kvxd.dust.physical.io.PhysicalIoEdge
@@ -29,16 +31,24 @@ internal class PhysicalIoCompiler(
     ): List<List<CellSpec>> {
         val inputCell = if (io == PhysicalIo.DEBUG_PADS) technology.debugInputPad else technology.inputTerminal
         val outputCell = if (io == PhysicalIo.DEBUG_PADS) technology.debugOutputPad else technology.outputTerminal
-        val gateRows = IntArray(netlist.gates.size)
-        val gatePositions = IntArray(netlist.gates.size)
+        val instanceRows = IntArray(netlist.instances.size)
+        val instancePositions = IntArray(netlist.instances.size)
         gatePartitions.forEachIndexed { row, specs ->
             specs.forEachIndexed { position, spec ->
                 if (spec.index >= 0) {
-                    gateRows[spec.index] = row
-                    gatePositions[spec.index] = position
+                    instanceRows[spec.index] = row
+                    instancePositions[spec.index] = position
                 }
             }
         }
+
+        fun reads(instance: Int, signal: Signal): Boolean = netlist.instances[instance].type.ports
+            .filter { it.direction == PortDirection.INPUT }
+            .any { port -> signal in netlist.instances[instance].connections.getValue(port.name) }
+
+        fun writes(instance: Int, signal: Signal): Boolean = netlist.instances[instance].type.ports
+            .filter { it.direction == PortDirection.OUTPUT }
+            .any { port -> signal in netlist.instances[instance].connections.getValue(port.name) }
         val layoutEdges = buildMap<Signal, InterfaceEdge> {
             layout?.groups?.forEach { group ->
                 val edge = group.edge ?: return@forEach
@@ -79,10 +89,10 @@ internal class PhysicalIoCompiler(
 
         val terminals = buildList {
             netlist.inputs.forEach { (name, signal) ->
-                val consumers = netlist.gates.indices.filter { signal in netlist.gates[it].inputs }
-                val row = if (consumers.isEmpty()) 0 else median(consumers.map { gateRows[it] })
-                val inRow = consumers.filter { gateRows[it] == row }
-                val anchor = if (inRow.isEmpty()) 0 else median(inRow.map { gatePositions[it] })
+                val consumers = netlist.instances.indices.filter { reads(it, signal) }
+                val row = if (consumers.isEmpty()) 0 else median(consumers.map { instanceRows[it] })
+                val inRow = consumers.filter { instanceRows[it] == row }
+                val anchor = if (inRow.isEmpty()) 0 else median(inRow.map { instancePositions[it] })
                 val placement = netlist.terminalPlacements[signal]
                 add(
                     Terminal(
@@ -104,13 +114,13 @@ internal class PhysicalIoCompiler(
                 )
             }
             netlist.outputs.forEach { (name, signal) ->
-                val producer = netlist.gates.indexOfFirst { it.output == signal }
-                val row = if (producer >= 0) gateRows[producer] else {
-                    val consumers = netlist.gates.indices.filter { signal in netlist.gates[it].inputs }
-                    if (consumers.isEmpty()) 0 else median(consumers.map { gateRows[it] })
+                val producer = netlist.instances.indices.firstOrNull { writes(it, signal) } ?: -1
+                val row = if (producer >= 0) instanceRows[producer] else {
+                    val consumers = netlist.instances.indices.filter { reads(it, signal) }
+                    if (consumers.isEmpty()) 0 else median(consumers.map { instanceRows[it] })
                 }
                 val anchor =
-                    if (producer >= 0) gatePositions[producer] else gatePartitions[row].lastIndex.coerceAtLeast(0)
+                    if (producer >= 0) instancePositions[producer] else gatePartitions[row].lastIndex.coerceAtLeast(0)
                 val placement = netlist.terminalPlacements[signal]
                 add(
                     Terminal(

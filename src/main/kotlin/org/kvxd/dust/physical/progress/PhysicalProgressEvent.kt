@@ -1,13 +1,5 @@
 package org.kvxd.dust.physical.progress
 
-enum class PhysicalProgressStage {
-    SYNTHESIS,
-    PLACEMENT,
-    ROUTING,
-    ELECTRICAL_FINALIZATION,
-    EMISSION,
-}
-
 data class PhysicalProgressEvent(
     val stage: PhysicalProgressStage,
     val completed: Int? = null,
@@ -21,11 +13,3 @@ data class PhysicalProgressEvent(
     val detail: String? = null,
     val approximate: Boolean = false,
 )
-
-fun interface PhysicalProgressListener {
-    fun onProgress(event: PhysicalProgressEvent)
-
-    companion object {
-        val NONE: PhysicalProgressListener = PhysicalProgressListener { }
-    }
-}

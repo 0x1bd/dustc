@@ -59,19 +59,6 @@ object BuiltinCells {
     val inputTerminal: CellType = source("input-terminal")
     val outputTerminal: CellType = sink("output-terminal")
 
-    val byId: Map<CellTypeId, CellType> = listOf(
-        not,
-        and2,
-        or2,
-        xor2,
-        mux2,
-        latch,
-        inputPad,
-        outputPad,
-        inputTerminal,
-        outputTerminal,
-    ).associateBy { it.id }
-
     private fun input(name: String): CellPort = CellPort(name, 1, PortDirection.INPUT)
     private fun output(name: String): CellPort = CellPort(name, 1, PortDirection.OUTPUT)
     private fun arc(from: String, to: String, ticks: Int): TimingArc = TimingArc(

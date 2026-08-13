@@ -14,6 +14,8 @@ import org.kvxd.dust.sim.GateLevelSimulator
 
 class CellLibraryTest {
     private val technology = MinecraftRedstone.technology
+    private fun cell(primitive: Primitive): StandardCell =
+        checkNotNull(technology.physicalCell(primitive.cellType))
 
     @Test
     fun `combinational cells match their truth tables`() {
@@ -90,15 +92,15 @@ class CellLibraryTest {
 
     @Test
     fun `routing edge tails stay compact`() {
-        assertEquals(CellSize(3, 2, 2), technology.primitives.getValue(Primitive.NOT).size)
-        assertEquals(CellSize(5, 2, 3), technology.primitives.getValue(Primitive.AND2).size)
-        assertEquals(CellSize(13, 2, 7), technology.primitives.getValue(Primitive.XOR2).size)
-        assertEquals(CellSize(26, 8, 7), technology.primitives.getValue(Primitive.MUX2).size)
+        assertEquals(CellSize(3, 2, 2), cell(Primitive.NOT).size)
+        assertEquals(CellSize(5, 2, 3), cell(Primitive.AND2).size)
+        assertEquals(CellSize(13, 2, 7), cell(Primitive.XOR2).size)
+        assertEquals(CellSize(26, 8, 7), cell(Primitive.MUX2).size)
     }
 
     @Test
     fun `wall torches are mounted to solid blocks`() {
-        technology.primitives.values.forEach { cell ->
+        Primitive.entries.map(::cell).forEach { cell ->
             val blocks = cell.blocks.toMap()
             cell.blocks.forEach { (pos, state) ->
                 if (state.type == BlockType.REDSTONE_WALL_TORCH) {
@@ -111,7 +113,7 @@ class CellLibraryTest {
 
     @Test
     fun `xor compact tail has no stale supports`() {
-        val blocks = technology.primitives.getValue(Primitive.XOR2).blocks.toMap()
+        val blocks = cell(Primitive.XOR2).blocks.toMap()
         listOf(BlockPos(12, 0, 0), BlockPos(12, 0, 4), BlockPos(12, 0, 5)).forEach { pos ->
             assertTrue(pos !in blocks, "xor2 still contains stale support at $pos")
         }
@@ -120,7 +122,7 @@ class CellLibraryTest {
     @Test
     fun `report cell geometry`() {
         println("cell           size      footprint blocks nodes latency")
-        (technology.primitives.entries.map { it.key.name.lowercase() to it.value } +
+        (Primitive.entries.map { it.name.lowercase() to cell(it) } +
             listOf("input-terminal" to technology.inputTerminal, "output-terminal" to technology.outputTerminal))
             .forEach { (name, cell) ->
                 val nodes = cell.blocks.count { (_, state) ->

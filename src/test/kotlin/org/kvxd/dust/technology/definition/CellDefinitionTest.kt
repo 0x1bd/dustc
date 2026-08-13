@@ -7,6 +7,7 @@ import kotlin.test.assertTrue
 import org.kvxd.dust.device.block.BlockType
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.technology.CellSize
+import org.kvxd.dust.cell.library.BuiltinCells
 
 class CellDefinitionTest {
     private val templates = mapOf(
@@ -68,7 +69,8 @@ class CellDefinitionTest {
         )
         CellDefinitionValidator.validate(definition, templates.keys)
 
-        val cell = StandardCellFactory(templates) { error("no includes expected") }.create(definition)
+        val cell = StandardCellFactory(templates) { error("no includes expected") }
+            .create(definition, BuiltinCells.not)
 
         assertEquals(CellSize(5, 3, 4), cell.size)
         assertEquals(setOf(BlockPos(0, 0, 0), BlockPos(1, 0, 0), BlockPos(2, 0, 0), BlockPos(3, 0, 0), BlockPos(4, 0, 0)), cell.blocks.map { it.first }.toSet())
@@ -91,6 +93,7 @@ class CellDefinitionTest {
                 ..
                 """,
             ),
+            BuiltinCells.not,
         )
         val composite = parse(
             """
@@ -105,7 +108,7 @@ class CellDefinitionTest {
         )
         CellDefinitionValidator.validate(composite, templates.keys)
 
-        val cell = StandardCellFactory(templates) { included }.create(composite)
+        val cell = StandardCellFactory(templates) { included }.create(composite, BuiltinCells.and2)
 
         assertEquals(CellSize(6, 3, 5), cell.size)
         assertTrue(BlockPos(4, 1, 2) in cell.blocks.map { it.first })

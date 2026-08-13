@@ -6,6 +6,7 @@ import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
 import org.kvxd.dust.physical.design.PlacedCell
+import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.technology.PinDirection
 import org.kvxd.dust.technology.RedstoneTechnology
 

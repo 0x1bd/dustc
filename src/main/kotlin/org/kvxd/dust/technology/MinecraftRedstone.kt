@@ -4,9 +4,25 @@ import org.kvxd.dust.device.block.BlockMatrix
 import org.kvxd.dust.device.block.BlockState
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.geometry.Direction
+import org.kvxd.dust.cell.library.BuiltinCells
+import org.kvxd.dust.cell.library.CellLibrary
+import org.kvxd.dust.cell.library.CellProvider
 import org.kvxd.dust.technology.definition.CellDefinitionLoader
 
 object MinecraftRedstone {
+    private val logicalTypes = listOf(
+        BuiltinCells.not,
+        BuiltinCells.and2,
+        BuiltinCells.or2,
+        BuiltinCells.xor2,
+        BuiltinCells.mux2,
+        BuiltinCells.latch,
+        BuiltinCells.inputPad,
+        BuiltinCells.outputPad,
+        BuiltinCells.inputTerminal,
+        BuiltinCells.outputTerminal,
+    ).associateBy { it.id.value }
+
     private val cells = CellDefinitionLoader(
         mapOf(
             "support" to RedstoneBlocks.cellSupport,
@@ -21,19 +37,26 @@ object MinecraftRedstone {
             "lever-floor" to RedstoneBlocks.floorLever,
             "lamp" to RedstoneBlocks.lamp,
         ),
+        logicalType = { name -> logicalTypes.getValue(name) },
+    )
+
+    private val cellLibrary = CellLibrary(
+        listOf(
+            BuiltinCells.not,
+            BuiltinCells.and2,
+            BuiltinCells.or2,
+            BuiltinCells.xor2,
+            BuiltinCells.mux2,
+            BuiltinCells.latch,
+        ).map { logical ->
+            CellProvider.fixed(logical, physicalView = { cells.load(logical.id.value) })
+        },
     )
 
     val technology: RedstoneTechnology = technology()
 
     fun technology(isolation: Int = 1, planeSeparation: Int = 2): RedstoneTechnology = RedstoneTechnology(
-        primitives = mapOf(
-            org.kvxd.dust.netlist.Primitive.NOT to cells.load("not"),
-            org.kvxd.dust.netlist.Primitive.AND2 to cells.load("and2"),
-            org.kvxd.dust.netlist.Primitive.OR2 to cells.load("or2"),
-            org.kvxd.dust.netlist.Primitive.XOR2 to cells.load("xor2"),
-            org.kvxd.dust.netlist.Primitive.MUX2 to cells.load("mux2"),
-            org.kvxd.dust.netlist.Primitive.LATCH to cells.load("latch"),
-        ),
+        cellLibrary = cellLibrary,
         debugInputPad = cells.load("input-pad"),
         debugOutputPad = cells.load("output-pad"),
         inputTerminal = cells.load("input-terminal"),

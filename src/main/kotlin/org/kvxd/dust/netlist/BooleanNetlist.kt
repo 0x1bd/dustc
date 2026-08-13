@@ -41,11 +41,15 @@ class BooleanNetlist internal constructor(
 
     fun evaluateWords(values: Map<String, Long>): Map<String, Long> {
         require(values.keys == inputs.keys) { "expected inputs ${inputs.keys}, got ${values.keys}" }
-        require(gates.none { it.primitive == Primitive.LATCH }) {
+        require(instances.none { it.type.behavior.stateBits > 0 }) {
             "$name contains storage; word evaluation is combinational only"
         }
         val state = LongArray(signals)
         inputs.forEach { (name, signal) -> state[signal.index] = checkNotNull(values[name]) }
+        if (instances.size != gates.size) {
+            evaluateGenericWords(state)
+            return outputs.mapValues { (_, signal) -> state[signal.index] }
+        }
         gates.forEach { gate ->
             state[gate.output.index] = when (gate.primitive) {
                 Primitive.NOT -> state[gate.inputs.single().index].inv()
@@ -60,6 +64,30 @@ class BooleanNetlist internal constructor(
             }
         }
         return outputs.mapValues { (_, signal) -> state[signal.index] }
+    }
+
+    private fun evaluateGenericWords(state: LongArray) {
+        combinationalOrder().forEach { instance ->
+            repeat(Long.SIZE_BITS) { lane ->
+                val inputValues = instance.type.ports
+                    .filter { it.direction == PortDirection.INPUT }
+                    .associate { port ->
+                        port.name to instance.connections.getValue(port.name).map { signal ->
+                            state[signal.index] and (1L shl lane) != 0L
+                        }.toBooleanArray()
+                    }
+                val result = instance.type.behavior.evaluate(inputValues, BooleanArray(0))
+                instance.type.ports.filter { it.direction == PortDirection.OUTPUT }.forEach { port ->
+                    val bits = checkNotNull(result.outputs[port.name]) {
+                        "${instance.name} did not produce ${port.name}"
+                    }
+                    require(bits.size == port.width)
+                    instance.connections.getValue(port.name).zip(bits.asIterable()).forEach { (signal, value) ->
+                        if (value) state[signal.index] = state[signal.index] or (1L shl lane)
+                    }
+                }
+            }
+        }
     }
 
     internal fun combinationalOrder(): List<CellInstance> = orderedCombinational

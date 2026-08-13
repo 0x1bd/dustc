@@ -1,9 +1,9 @@
 package org.kvxd.dust.technology.definition
 
-import org.kvxd.dust.cell.definition.CellTypeId
-import org.kvxd.dust.cell.library.BuiltinCells
+import org.kvxd.dust.cell.definition.CellType
 import org.kvxd.dust.device.block.BlockState
 import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.technology.CellImplementation
 import org.kvxd.dust.technology.CellPin
 import org.kvxd.dust.technology.CellSize
 import org.kvxd.dust.technology.StandardCell
@@ -12,7 +12,11 @@ internal class StandardCellFactory(
     private val templates: Map<String, BlockState>,
     private val include: (String) -> StandardCell,
 ) {
-    fun create(definition: CellDefinition): StandardCell {
+    fun create(
+        definition: CellDefinition,
+        logicalType: CellType,
+        implementation: CellImplementation = CellImplementation.Standard,
+    ): StandardCell {
         val symbols = definition.palette.associate { it.symbol to templates.getValue(it.template) }
         val blocks = linkedMapOf<BlockPos, BlockState>()
         var maximum = BlockPos(-1, -1, -1)
@@ -71,10 +75,11 @@ internal class StandardCellFactory(
         }
         return StandardCell(
             definition.name,
-            BuiltinCells.byId.getValue(CellTypeId(definition.name)),
+            logicalType,
             size,
             pins,
             blocks.entries.map { it.key to it.value },
+            implementation,
         )
     }
 }

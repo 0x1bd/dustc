@@ -4,8 +4,10 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.sqrt
 import org.kvxd.dust.netlist.BooleanNetlist
+import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
 import org.kvxd.dust.physical.io.PhysicalIo
+import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.physical.io.PhysicalIoLayout
 import org.kvxd.dust.physical.progress.PhysicalProgressEvent
 import org.kvxd.dust.physical.progress.PhysicalProgressListener
@@ -13,6 +15,7 @@ import org.kvxd.dust.physical.progress.PhysicalProgressStage
 import org.kvxd.dust.physical.placement.ConnectivityPlacer
 import org.kvxd.dust.technology.PinDirection
 import org.kvxd.dust.technology.RedstoneTechnology
+import org.kvxd.dust.technology.CellImplementation
 
 internal class PhysicalPlacementPlanner(
     private val technology: RedstoneTechnology,
@@ -21,7 +24,7 @@ internal class PhysicalPlacementPlanner(
 ) {
     internal fun cellInstances(netlist: BooleanNetlist): List<CellSpec> =
         netlist.instances.mapIndexed { index, instance ->
-            val cell = checkNotNull(technology.cells[instance.type.id]) {
+            val cell = checkNotNull(technology.physicalCell(instance.type)) {
                 "technology has no physical view for ${instance.type.id}"
             }
             val nets = cell.pins.associate { pin ->
@@ -35,7 +38,17 @@ internal class PhysicalPlacementPlanner(
             val tiers = outputs.mapNotNull { netlist.placements[it]?.tier }.distinct()
             require(tiers.size <= 1) { "${instance.name} has conflicting #[tier] constraints $tiers" }
             val near = outputs.flatMapTo(linkedSetOf()) { netlist.placements[it]?.near.orEmpty() }
-            CellSpec(instance.name, cell, nets, index, tiers.singleOrNull(), near)
+            val hardMacro = cell.implementation as? CellImplementation.HardMacro
+            CellSpec(
+                instance.name,
+                cell,
+                nets,
+                index,
+                tiers.singleOrNull(),
+                near,
+                hardMacro?.visibleEdge,
+                exclusiveRow = hardMacro?.exclusiveRow == true,
+            )
         }
 
     internal fun searchFloorplan(
@@ -62,7 +75,9 @@ internal class PhysicalPlacementPlanner(
             placer.place(rows).forEach { placement ->
                 val gatePartitions = splitForcedTierRows(placement, specs)
                     .map { row -> row.map { index -> specs[index] } }
-                val partitions = ioCompiler.attachPads(netlist, gatePartitions, io, layout)
+                val partitions = applyPlacementRequirements(
+                    ioCompiler.attachPads(netlist, gatePartitions, io, layout),
+                )
                 tierCounts(partitions).forEach tierLoop@{ tierCount ->
                     val assignment = tierAssignments(netlist, partitions, tierCount) ?: return@tierLoop
                     try {
@@ -159,6 +174,41 @@ internal class PhysicalPlacementPlanner(
                 row.groupBy { specs[it].forcedTier }.values.filter { it.isNotEmpty() }
             }
         }
+
+    private fun applyPlacementRequirements(rows: List<List<CellSpec>>): List<List<CellSpec>> {
+        val separated = rows.flatMap { row ->
+            buildList {
+                val ordinary = mutableListOf<CellSpec>()
+                fun flushOrdinary() {
+                    if (ordinary.isNotEmpty()) {
+                        add(ordinary.toList())
+                        ordinary.clear()
+                    }
+                }
+                row.forEach { spec ->
+                    if (spec.exclusiveRow) {
+                        flushOrdinary()
+                        add(listOf(spec))
+                    } else {
+                        ordinary += spec
+                    }
+                }
+                flushOrdinary()
+            }
+        }
+        listOf(InterfaceEdge.NORTH, InterfaceEdge.SOUTH).forEach { edge ->
+            val visible = separated.filter { row -> row.singleOrNull()?.takeIf { it.exclusiveRow }?.forcedEdge == edge }
+            require(visible.size <= 1) { "more than one exclusive hard macro requests the $edge edge" }
+        }
+        return separated.sortedBy { row ->
+            val edge = row.singleOrNull()?.takeIf { it.exclusiveRow }?.forcedEdge
+            when (edge) {
+                InterfaceEdge.NORTH -> 0
+                InterfaceEdge.SOUTH -> 2
+                else -> 1
+            }
+        }
+    }
 
     private fun tierCounts(rows: List<List<CellSpec>>): List<Int> {
         val required = rows.flatten().mapNotNull { it.forcedTier }.maxOrNull()?.plus(1) ?: 1

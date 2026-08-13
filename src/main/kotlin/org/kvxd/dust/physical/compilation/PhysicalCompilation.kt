@@ -4,6 +4,7 @@ import org.kvxd.dust.device.block.BlockMatrix
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.physical.design.PhysicalDesign
+import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.physical.design.RoutedNet
 import org.kvxd.dust.physical.io.PhysicalIo
 import org.kvxd.dust.physical.io.PhysicalIoLayout

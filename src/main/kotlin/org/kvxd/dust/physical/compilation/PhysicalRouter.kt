@@ -2,6 +2,7 @@ package org.kvxd.dust.physical.compilation
 
 import kotlin.math.abs
 import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.block.BlockState
 import org.kvxd.dust.device.block.ComponentKind

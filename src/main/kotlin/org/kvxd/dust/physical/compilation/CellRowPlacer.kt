@@ -3,6 +3,7 @@ package org.kvxd.dust.physical.compilation
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.block.ComponentKind
 import org.kvxd.dust.physical.design.PlacedCell
+import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.technology.PinDirection
 import org.kvxd.dust.technology.RedstoneTechnology
 

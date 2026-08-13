@@ -6,11 +6,11 @@ import org.kvxd.dust.device.block.BlockState
 import org.kvxd.dust.device.geometry.Direction
 import org.kvxd.dust.device.property.Properties
 import org.kvxd.dust.device.redstone.Redstone
-import org.kvxd.dust.cell.definition.CellTypeId
-import org.kvxd.dust.netlist.Primitive
+import org.kvxd.dust.cell.definition.CellType
+import org.kvxd.dust.cell.library.CellLibrary
 
 class RedstoneTechnology internal constructor(
-    val primitives: Map<Primitive, StandardCell>,
+    val cellLibrary: CellLibrary,
     val debugInputPad: StandardCell,
     val debugOutputPad: StandardCell,
     val inputTerminal: StandardCell,
@@ -23,8 +23,9 @@ class RedstoneTechnology internal constructor(
     val lowerPlaneY: Int,
     val viaSignalOffsets: List<BlockPos>,
 ) {
+    private val validatedCells = mutableSetOf<StandardCell>()
+
     init {
-        require(primitives.keys == Primitive.entries.toSet())
         require(isolation > 0)
         require(lowerPlaneY > 0)
         require(viaSignalOffsets.first() == BlockPos.ORIGIN)
@@ -36,23 +37,11 @@ class RedstoneTechnology internal constructor(
             }
         }
 
-        (primitives.values + debugInputPad + debugOutputPad + inputTerminal + outputTerminal).forEach { cell ->
-            cell.pins.forEach { pin ->
-                require(pin.driveStrength in 1..Redstone.maximumSignalStrength)
-                require(pin.requiredStrength in 1..Redstone.maximumSignalStrength)
-            }
-            cell.pins.map { it.position.x }.sorted().zipWithNext().forEach { (left, right) ->
-                require(right - left > isolation) {
-                    "${cell.name} pins occupy columns $left and $right, which do not clear isolation $isolation"
-                }
-            }
-        }
+        cellLibrary.registeredCells().forEach { validateCell(it.physicalView) }
+        listOf(debugInputPad, debugOutputPad, inputTerminal, outputTerminal).forEach(::validateCell)
     }
 
     val cellGap: Int = isolation
-    val cells: Map<CellTypeId, StandardCell> = primitives.map { (primitive, cell) ->
-        primitive.cellType.id to cell
-    }.toMap()
     val signalStrength: Int = Redstone.maximumSignalStrength
     val upperPlaneY: Int = lowerPlaneY + viaSignalOffsets.last().y
     val lanePitch: Int = viaSignalOffsets.maxOf { it.z } - viaSignalOffsets.minOf { it.z } + isolation
@@ -60,16 +49,23 @@ class RedstoneTechnology internal constructor(
     val backbonePitch: Int = backboneDetour + isolation + 1
     val backboneBypassLength: Int = viaSignalOffsets.maxOf { kotlin.math.abs(it.z) } + backboneDetour
     val cellOriginY: Int = upperPlaneY - inputTerminal.pin("y").position.y
-    val routeHeight: Int = maxOf(
-        upperPlaneY + 1,
-        cellOriginY + (primitives.values + debugInputPad + debugOutputPad + inputTerminal + outputTerminal)
-            .maxOf { it.size.y },
-    )
+
+    @Synchronized
+    fun physicalCell(type: CellType): StandardCell? = cellLibrary.physicalView(type)?.also(::validateCell)
 
     fun repeater(travel: Direction, delay: Int = Properties.DELAY.min): BlockState =
         RedstoneBlocks.repeater(travel, delay)
 
     fun placeCell(matrix: BlockMatrix, cell: StandardCell, origin: BlockPos) {
         cell.blocks.forEach { (local, state) -> matrix.placeChecked(origin + local, state) }
+    }
+
+    private fun validateCell(cell: StandardCell) {
+        if (!validatedCells.add(cell)) return
+        cell.pins.map { it.position.x }.sorted().zipWithNext().forEach { (left, right) ->
+            require(right - left > isolation) {
+                "${cell.name} pins occupy columns $left and $right, which do not clear isolation $isolation"
+            }
+        }
     }
 }
