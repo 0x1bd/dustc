@@ -9,6 +9,72 @@ import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 class DustLanguageTest {
     @Test
+    fun `hardware if expressions lower bits and buses to mux cells`() {
+        val conditional = DustLanguage.compile(
+            """
+            module conditional(
+                input select: bit,
+                input low: bits<4>,
+                input high: bits<4>,
+                output y: bits<4>,
+            ) {
+                y = if select { high } else { low }
+            }
+            """.trimIndent(),
+            "conditional.dust",
+        ).single()
+
+        assertEquals(0x3uL, conditional.evaluate("select" to 0uL, "low" to 0x3uL, "high" to 0xcuL)["y"])
+        assertEquals(0xcuL, conditional.evaluate("select" to 1uL, "low" to 0x3uL, "high" to 0xcuL)["y"])
+        val netlist = conditional.lowerToBooleanNetlist()
+        assertEquals(4, netlist.gates.count { it.primitive == org.kvxd.dust.netlist.Primitive.MUX2 })
+        val physical = conditional.compile().physical
+        assertEquals(
+            4,
+            physical.cells.count { it.cell.logicalType === org.kvxd.dust.cell.library.BuiltinCells.mux2 },
+        )
+    }
+
+    @Test
+    fun `hardware if expressions nest and diagnose invalid widths`() {
+        val nested = DustLanguage.compile(
+            """
+            module nested(
+                input first: bit,
+                input second: bit,
+                input a: bit,
+                input b: bit,
+                input c: bit,
+                output y: bit,
+            ) {
+                y = if first { a } else { if second { b } else { c } }
+            }
+            """.trimIndent(),
+            "nested-if.dust",
+        ).single()
+        assertEquals(true, nested.evaluate("first" to 1uL, "second" to 0uL, "a" to 1uL, "b" to 0uL, "c" to 0uL).bit("y"))
+        assertEquals(true, nested.evaluate("first" to 0uL, "second" to 1uL, "a" to 0uL, "b" to 1uL, "c" to 0uL).bit("y"))
+
+        val invalid = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(input select: bits<2>, input a: bit, input b: bit, output y: bit) " +
+                    "{ y = if select { a } else { b } }",
+                "invalid-if.dust",
+            )
+        }
+        assertTrue("an if condition must be one bit" in invalid.message.orEmpty())
+
+        val mismatched = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(input select: bit, input a: bit, input b: bits<2>, output y: bit) " +
+                    "{ y = if select { a } else { b } }",
+                "mismatched-if.dust",
+            )
+        }
+        assertTrue("if branches have widths 1 and 2" in mismatched.message.orEmpty())
+    }
+
+    @Test
     fun `four bit adder is logically exhaustive`() {
         val adder = DustLanguage.compile(ADDER, "adder4.dust").single()
 

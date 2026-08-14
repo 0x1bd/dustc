@@ -13,6 +13,7 @@ import org.kvxd.dust.lang.syntax.BlockSyntax
 import org.kvxd.dust.lang.syntax.CallSyntax
 import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
+import org.kvxd.dust.lang.syntax.IfSyntax
 import org.kvxd.dust.lang.syntax.IndexSyntax
 import org.kvxd.dust.lang.syntax.IntegerSyntax
 import org.kvxd.dust.lang.syntax.ModuleSyntax
@@ -226,6 +227,8 @@ internal class Parser(
                 else NameSyntax(token.value, token)
             }
 
+            TokenType.IF -> parseIfExpression()
+
             TokenType.LPAREN -> {
                 advance()
                 val expression = parseExpression()
@@ -235,6 +238,19 @@ internal class Parser(
 
             else -> error("expected a signal or gate expression")
         }
+    }
+
+    private fun parseIfExpression(): IfSyntax {
+        val location = consume(TokenType.IF, "expected 'if'")
+        val condition = parseExpression()
+        consume(TokenType.LBRACE, "expected '{' after if condition")
+        val whenTrue = parseExpression()
+        consume(TokenType.RBRACE, "expected '}' after if value")
+        consume(TokenType.ELSE, "a hardware if expression needs an else branch")
+        consume(TokenType.LBRACE, "expected '{' after else")
+        val whenFalse = parseExpression()
+        consume(TokenType.RBRACE, "expected '}' after else value")
+        return IfSyntax(condition, whenTrue, whenFalse, location)
     }
 
     private fun parseArguments(): List<ExpressionSyntax> {

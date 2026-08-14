@@ -14,6 +14,7 @@ import org.kvxd.dust.lang.syntax.BlockSyntax
 import org.kvxd.dust.lang.syntax.CallSyntax
 import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
+import org.kvxd.dust.lang.syntax.IfSyntax
 import org.kvxd.dust.lang.syntax.IndexSyntax
 import org.kvxd.dust.lang.syntax.IntegerSyntax
 import org.kvxd.dust.lang.syntax.ModuleSyntax
@@ -277,6 +278,27 @@ internal class Elaborator(
                     TokenType.CARET -> builder.xor(a, b)
                     else -> error("unexpected gate operator ${expression.operator}")
                 }
+            })
+        }
+        is IfSyntax -> {
+            val select = signals(
+                evaluate(expression.condition, environment, outputs, builder, callStack),
+                expression.condition.location,
+            )
+            if (select.size != 1) fail(expression.condition.location, "an if condition must be one bit")
+            val high = signals(
+                evaluate(expression.whenTrue, environment, outputs, builder, callStack),
+                expression.whenTrue.location,
+            )
+            val low = signals(
+                evaluate(expression.whenFalse, environment, outputs, builder, callStack),
+                expression.whenFalse.location,
+            )
+            if (high.size != low.size) {
+                fail(expression.location, "if branches have widths ${high.size} and ${low.size}")
+            }
+            Value.Signals(low.zip(high) { whenFalse, whenTrue ->
+                builder.mux(select.single(), whenFalse, whenTrue)
             })
         }
         is CallSyntax -> call(expression, environment, outputs, builder, callStack)

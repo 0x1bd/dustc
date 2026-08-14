@@ -12,6 +12,8 @@ internal enum class TokenType(val text: String = "") {
     MUT("mut"),
     FOR("for"),
     IN("in"),
+    IF("if"),
+    ELSE("else"),
     AND("and"),
     OR("or"),
 

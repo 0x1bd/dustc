@@ -1,6 +1,7 @@
 # Dust language
 
-Dust is a small hardware description language for building Boolean circuits that `dustc` can place and route as Minecraft redstone.
+Dust is a small hardware description language for building Boolean circuits that `dustc` can place and route as
+Minecraft redstone.
 
 ## A first module
 
@@ -68,7 +69,8 @@ module adder(
 }
 ```
 
-Groups are primarily interface and placement metadata. They do **not** create a value that can be read from expressions, and grouping ports by itself does not force them into a physical strip or panel.
+Groups are primarily interface and placement metadata. They do **not** create a value that can be read from expressions,
+and grouping ports by itself does not force them into a physical strip or panel.
 
 A group name can, however, be referenced by placement attributes such as `#[near(operands)]`.
 
@@ -138,7 +140,8 @@ let mut carry = cin
 carry = next_carry
 ```
 
-This is useful for constructing chains in loops, but it is important that `let mut` **does not create storage hardware**. It only changes which compile-time value the name refers to. Use `latch()` when the circuit actually needs state.
+This is useful for constructing chains in loops, but it is important that `let mut` **does not create storage hardware
+**. It only changes which compile-time value the name refers to. Use `latch()` when the circuit actually needs state.
 
 Mutable buses can also be changed one bit at a time:
 
@@ -156,9 +159,11 @@ y = a ^ b
 sum[0] = p
 ```
 
-Every output bit must be assigned exactly once. Dust rejects missing assignments and multiple assignments to the same output bit.
+Every output bit must be assigned exactly once. Dust rejects missing assignments and multiple assignments to the same
+output bit.
 
-Outputs cannot currently be read back while a module is being built. If a result is needed again, give the expression a local name first:
+Outputs cannot currently be read back while a module is being built. If a result is needed again, give the expression a
+local name first:
 
 ```dust
 let p = a ^ b
@@ -168,7 +173,8 @@ carry = p & cin
 
 ## Compile-time integers
 
-Integer values exist only while elaborating the circuit. They are used for things such as loop bounds and bus indices; they are not wires and cannot be connected to gates.
+Integer values exist only while elaborating the circuit. They are used for things such as loop bounds and bus indices;
+they are not wires and cannot be connected to gates.
 
 Dust accepts decimal, hexadecimal, and binary integer literals, with optional `_` separators:
 
@@ -187,7 +193,8 @@ let index = 3
 out = bus[index]
 ```
 
-There are currently no integer arithmetic operators. Loop indices and literal integer bindings are the main sources of compile-time integers.
+There are currently no integer arithmetic operators. Loop indices and literal integer bindings are the main sources of
+compile-time integers.
 
 ## Loops
 
@@ -221,6 +228,23 @@ for i in 0..4 {
     carry = (a[i] & b[i]) | (p & carry)
 }
 cout = carry
+```
+
+## Hardware conditionals
+
+An `if` expression selects between two hardware values:
+
+```dust
+y = if select { high } else { low }
+```
+
+The condition must be one bit. Both branches must have the same width and may be either bits or buses. The compiler
+builds both branch expressions and lowers each result bit to a multiplexer (`mux`). An `else` branch is required.
+
+Conditionals may nest and may appear anywhere another signal expression is accepted:
+
+```dust
+let selected = if first { a } else { if second { b } else { c } }
 ```
 
 ## Built-in hardware
@@ -294,13 +318,16 @@ Arguments are positional and correspond to the called module's input ports in de
 
 A module call returns an output bundle. Read individual outputs with `.name`, such as `first.sum` or `first.carry`.
 
-Called modules are flattened into the caller. Dust does not preserve a separate physical module instance. Recursive module calls are not allowed. Modules may appear in any order in the file.
+Called modules are flattened into the caller. Dust does not preserve a separate physical module instance. Recursive
+module calls are not allowed. Modules may appear in any order in the file.
 
-Placement attributes attached to a module's top-level I/O apply when that module itself is compiled as the top level. They are not propagated through a nested module call.
+Placement attributes attached to a module's top-level I/O apply when that module itself is compiled as the top level.
+They are not propagated through a nested module call.
 
 ## Physical placement attributes
 
-Dust normally chooses placement automatically. Attributes let a design provide useful physical constraints or hints without describing exact Minecraft coordinates.
+Dust normally chooses placement automatically. Attributes let a design provide useful physical constraints or hints
+without describing exact Minecraft coordinates.
 
 Attributes do not change the logical behavior of the circuit.
 
@@ -326,9 +353,11 @@ module adder4(
 }
 ```
 
-Without `#[panel]`, the ports are still grouped logically, but the physical compiler remains free to place them independently.
+Without `#[panel]`, the ports are still grouped logically, but the physical compiler remains free to place them
+independently.
 
-A panel must be a named top-level I/O group. The compiler currently supports panels on the north or south edge. If no `#[edge]` is given, the compiler chooses the panel edge automatically.
+A panel must be a named top-level I/O group. The compiler currently supports panels on the north or south edge. If no
+`#[edge]` is given, the compiler chooses the panel edge automatically.
 
 ### `#[edge(...)]`
 
@@ -368,7 +397,8 @@ Multiple targets can be given:
 let p = a ^ b
 ```
 
-For an internal `let`, targets can be existing local values, input ports, or named input groups. On a top-level port, targets may also include outputs and output groups because placement is applied after the module has been elaborated:
+For an internal `let`, targets can be existing local values, input ports, or named input groups. On a top-level port,
+targets may also include outputs and output groups because placement is applied after the module has been elaborated:
 
 ```dust
 module example(
@@ -421,7 +451,8 @@ Internal placement attributes are attached to immutable `let` bindings:
 let p = a ^ b
 ```
 
-`#[edge]` and `#[panel]` are only valid for top-level I/O. Placement attributes cannot be attached to `let mut` bindings.
+`#[edge]` and `#[panel]` are only valid for top-level I/O. Placement attributes cannot be attached to `let mut`
+bindings.
 
 ## Blocks and scope
 
@@ -438,7 +469,8 @@ Bindings declared inside a block are not available outside it.
 
 Loop bodies also get their own scope, with the loop index defined inside that scope.
 
-Dust does not use semicolons. Statements are separated by their syntax and may be formatted across lines however is most readable.
+Dust does not use semicolons. Statements are separated by their syntax and may be formatted across lines however is most
+readable.
 
 ## Comments
 
@@ -487,12 +519,14 @@ module adder4(
 }
 ```
 
-The loop is unrolled into four stages. Each Boolean operator becomes primitive logic, the output assignments become module outputs, and the placement attributes tell the physical compiler to arrange both I/O groups as compact panels.
+The loop is unrolled into four stages. Each Boolean operator becomes primitive logic, the output assignments become
+module outputs, and the placement attributes tell the physical compiler to arrange both I/O groups as compact panels.
 
 More examples are available in the [examples](../examples) directory.
 
 ## Current language boundaries
 
-Dust is intentionally small. In particular, it currently has no signal constants, arithmetic operators, conditionals, bus slices, runtime loops, recursive modules, or user-defined types.
+Dust is intentionally small. In particular, it currently has no signal constants, arithmetic operators, bus slices,
+runtime loops, recursive modules, or user-defined types.
 
 Certain features will likely be added in the future.
