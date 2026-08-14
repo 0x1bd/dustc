@@ -208,7 +208,7 @@ module main(
 ```
 
 Dust supports buses, Boolean operators, compile-time loops and parameters, local bindings, module composition, a bundled
-generic arithmetic/comparison library, multiplexers, latches, rising-edge registers, and physical placement attributes
+generic arithmetic/comparison library, multiplexers, latches, clocked registers, and physical placement attributes
 such as `#[near(...)]`,
 `#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
 

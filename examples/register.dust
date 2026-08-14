@@ -1,0 +1,8 @@
+module main(
+    input write_data: bits<8>,
+    input write: bit,
+    input clock: bit,
+    output read_data: bits<8>,
+) {
+    read_data = enabled_register<8>(write_data, write, clock)
+}

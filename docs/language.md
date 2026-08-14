@@ -329,17 +329,19 @@ Both arguments are one bit. When `hold` is 0, the latch follows `data`. When `ho
 
 Unlike `let mut`, this creates actual stateful hardware.
 
-### Rising-edge storage
+### Clocked storage
 
-`dff(data, clock)` stores one bit on a low-to-high clock transition:
+A DFF (data flip-flop) is a one-bit memory element. Its data input is traditionally called `d`, and its stored output is
+called `q`. In Dust, `dff(data, clock)` copies `data` into that stored bit when `clock` changes from 0 to 1:
 
 ```dust
 q = dff(d, clock)
 ```
 
-Changing `data` while `clock` remains low or high does not change `q`, and a falling edge does not capture. All DFFs
-connected to one clock sample simultaneously. The physical DFF uses a subtraction comparator and a two-tick repeater as
-a rising-edge detector, which briefly opens a locked storage repeater.
+Changing `data` while `clock` remains 0 or 1 does not change `q`. Changing `clock` from 1 back to 0 does not store
+anything. All DFFs connected to one clock store their inputs simultaneously when it changes from 0 to 1. The physical
+DFF uses a subtraction comparator and a two-tick repeater to detect that change and briefly open a locked storage
+repeater.
 
 Register helpers apply DFF storage to a complete bus. Their width is inferred from `data`; an optional explicit width is
 accepted as a check:
@@ -350,9 +352,15 @@ held = enabled_register<8>(next_value, enable, clock)
 state = resettable_register(next_state, reset, clock)
 ```
 
-`enabled_register` retains its old value when `enable` is low. `resettable_register` has an active-high synchronous
-reset: it captures zero on a rising edge while `reset` is high. Enable and reset logic is composed from multiplexers in
-front of ordinary DFFs.
+`enabled_register` retains its old value when `enable` is 0. `resettable_register` has a synchronous reset: it stores
+zero when `clock` changes from 0 to 1 while `reset` is 1. Enable and reset logic is composed from multiplexers in front
+of ordinary DFFs.
+
+The complete [`register.dust`](../examples/register.dust) example stores and exposes an 8-bit value. To write a value,
+put it on `write_data`, set `write` to 1, and change `clock` from 0 to 1. Then set `write` back to 0. `read_data`
+continuously exposes the stored value, so reading needs no separate action. Changes to `write_data`, and further clock
+changes while `write` is 0, do not overwrite it. To write another value, return `clock` to 0, set up the new value with
+`write` at 1, and change `clock` to 1 again.
 
 Physical compilation reports `minimumSafeStepTicks`/`minimumClockPeriodTicks`, hold slack, and maximum clock skew.
 Supplying an explicit clock period through the compiler API makes setup, hold, or skew violations reject the build.

@@ -64,12 +64,12 @@
   },
   "D flip-flop": {
     "prefix": "dff",
-    "description": "Capture one bit on the rising clock edge",
+    "description": "Store one bit when the clock changes from 0 to 1",
     "body": ["dff(${1:data}, ${2:clock})"]
   },
   "Register": {
     "prefix": "register",
-    "description": "Capture a bus on the rising clock edge",
+    "description": "Store a bus when the clock changes from 0 to 1",
     "body": ["register(${1:data}, ${2:clock})"]
   },
   "Enabled register": {
