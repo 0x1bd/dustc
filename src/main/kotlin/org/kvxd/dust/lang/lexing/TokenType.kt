@@ -6,6 +6,7 @@ internal enum class TokenType(val text: String = "") {
     INT("integer"),
 
     MODULE("module"),
+    CONST("const"),
     INPUT("input"),
     OUTPUT("output"),
     LET("let"),
@@ -16,6 +17,8 @@ internal enum class TokenType(val text: String = "") {
     ELSE("else"),
     AND("and"),
     OR("or"),
+    TRUE("true"),
+    FALSE("false"),
 
     COLON(":"),
     COMMA(","),
@@ -35,5 +38,10 @@ internal enum class TokenType(val text: String = "") {
     CARET("^"),
     TILDE("~"),
     BANG("!"),
+    PLUS("+"),
+    MINUS("-"),
+    STAR("*"),
+    SLASH("/"),
+    PERCENT("%"),
     HASH("#"),
 }

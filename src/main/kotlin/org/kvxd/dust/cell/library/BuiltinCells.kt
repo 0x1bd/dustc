@@ -54,6 +54,8 @@ object BuiltinCells {
             constraints = listOf(TimingConstraint.SetupHold("d", "hold", Edge.RISE, 0, 1)),
         ),
     )
+    val constantLow: CellType = constant("constant-low", false)
+    val constantHigh: CellType = constant("constant-high", true)
     val inputPad: CellType = source("input-pad")
     val outputPad: CellType = sink("output-pad")
     val inputTerminal: CellType = source("input-terminal")
@@ -72,6 +74,13 @@ object BuiltinCells {
         CellTypeId(id),
         listOf(output("y")),
         CellBehavior.Combinational { mapOf("y" to booleanArrayOf(false)) },
+        CellTiming.NONE,
+    )
+
+    private fun constant(id: String, value: Boolean): CellType = CellType(
+        CellTypeId(id),
+        listOf(output("y")),
+        CellBehavior.Combinational { mapOf("y" to booleanArrayOf(value)) },
         CellTiming.NONE,
     )
 

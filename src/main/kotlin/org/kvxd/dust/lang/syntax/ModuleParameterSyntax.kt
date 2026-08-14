@@ -2,10 +2,8 @@ package org.kvxd.dust.lang.syntax
 
 import org.kvxd.dust.lang.lexing.Token
 
-internal data class ModuleSyntax(
+internal data class ModuleParameterSyntax(
     val name: String,
-    val parameters: List<ModuleParameterSyntax>,
-    val ports: List<PortSyntax>,
-    val body: BlockSyntax,
+    val default: ExpressionSyntax?,
     override val location: Token,
 ) : SyntaxNode

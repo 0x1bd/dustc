@@ -3,6 +3,8 @@ package org.kvxd.dust.lang.elaboration
 import org.kvxd.dust.Circuit
 import org.kvxd.dust.CircuitPort
 import org.kvxd.dust.CircuitPortDirection
+import org.kvxd.dust.cell.definition.PortDirection as CellPortDirection
+import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.lang.diagnostic.DiagnosticReporter
 import org.kvxd.dust.lang.lexing.Token
 import org.kvxd.dust.lang.lexing.TokenType
@@ -11,6 +13,7 @@ import org.kvxd.dust.lang.syntax.AssignmentSyntax
 import org.kvxd.dust.lang.syntax.AttributeSyntax
 import org.kvxd.dust.lang.syntax.BinarySyntax
 import org.kvxd.dust.lang.syntax.BlockSyntax
+import org.kvxd.dust.lang.syntax.BooleanSyntax
 import org.kvxd.dust.lang.syntax.CallSyntax
 import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
@@ -32,21 +35,60 @@ import org.kvxd.dust.physical.io.PhysicalIoEdge
 internal class Elaborator(
     modules: List<ModuleSyntax>,
     private val reporter: DiagnosticReporter,
+    private val cellLibrary: CellLibrary,
 ) {
     private val modules = modules.associateBy { it.name }
+    private val specializations = linkedMapOf<SpecializationKey, SpecializedModule>()
 
-    fun build(module: ModuleSyntax): Circuit {
+    init {
+        modules.forEach { module ->
+            val duplicate = module.parameters.groupBy { it.name }.values.firstOrNull { it.size > 1 }
+            if (duplicate != null) fail(
+                duplicate.last().location,
+                "duplicate module parameter '${duplicate.first().name}'"
+            )
+            val firstDefault = module.parameters.indexOfFirst { it.default != null }
+            if (firstDefault >= 0) {
+                module.parameters.drop(firstDefault).firstOrNull { it.default == null }?.let { parameter ->
+                    fail(
+                        parameter.location,
+                        "required parameter '${parameter.name}' follows a parameter with a default"
+                    )
+                }
+            }
+            module.parameters.forEach { parameter ->
+                if (module.ports.any { it.name == parameter.name }) {
+                    fail(parameter.location, "parameter '${parameter.name}' conflicts with a port")
+                }
+            }
+            if (module.name in cellLibrary.providerNames()) {
+                fail(module.location, "module '${module.name}' is ambiguous with a bundled library cell")
+            }
+        }
+    }
+
+    fun build(module: ModuleSyntax, parameters: Map<String, Int> = emptyMap()): Circuit {
+        val specialized = specialize(module, parameters, module.location)
         val builder = BooleanNetlistBuilder(module.name)
-        val ports = validatePorts(module)
+        val ports = validatePorts(specialized)
         val inputs = ports.filter { it.direction == CircuitPortDirection.INPUT }.associate { port ->
             port.name to Value.Signals(
                 if (port.width == 1) listOf(builder.input(port.name)) else builder.inputBus(port.name, port.width),
             )
         }
-        val outputs = elaborate(module, builder, inputs, listOf(module.name), applyTerminalPlacement = true)
+        val outputs = elaborate(
+            specialized,
+            builder,
+            inputs,
+            listOf(specialized.key),
+            applyTerminalPlacement = true,
+        )
         ports.filter { it.direction == CircuitPortDirection.OUTPUT }.forEach { port ->
             val signals = (outputs.getValue(port.name) as Value.Signals).signals
-            if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(port.name, signals)
+            if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(
+                port.name,
+                signals
+            )
         }
         val netlist = try {
             builder.build()
@@ -60,9 +102,10 @@ internal class Elaborator(
         }
     }
 
-    private fun validatePorts(module: ModuleSyntax): List<CircuitPort> {
+    private fun validatePorts(module: SpecializedModule): List<CircuitPort> {
         val names = hashSetOf<String>()
-        return module.ports.map { port ->
+        return module.ports.map { resolved ->
+            val port = resolved.syntax
             if (!names.add(port.name)) fail(port.location, "duplicate port '${port.name}'")
             try {
                 val placement = placementAttributes(port.attributes)
@@ -70,11 +113,14 @@ internal class Elaborator(
                     fail(port.location, "#[panel] requires a named top-level I/O group")
                 }
                 if (placement.panel && placement.edge in setOf(InterfaceEdge.EAST, InterfaceEdge.WEST)) {
-                    fail(port.location, "#[panel] currently supports north/south edges; omit #[edge] for automatic panel placement")
+                    fail(
+                        port.location,
+                        "#[panel] currently supports north/south edges; omit #[edge] for automatic panel placement"
+                    )
                 }
                 CircuitPort(
                     port.name,
-                    port.width,
+                    resolved.width,
                     if (port.direction == PortDirection.INPUT) {
                         CircuitPortDirection.INPUT
                     } else {
@@ -88,32 +134,39 @@ internal class Elaborator(
                 fail(port.location, exception.message ?: "invalid port")
             }
         }.also { ports ->
-            if (ports.none { it.direction == CircuitPortDirection.INPUT }) fail(module.location, "module has no inputs")
-            if (ports.none { it.direction == CircuitPortDirection.OUTPUT }) fail(module.location, "module has no outputs")
+            if (ports.none { it.direction == CircuitPortDirection.INPUT }) fail(
+                module.syntax.location,
+                "module has no inputs"
+            )
+            if (ports.none { it.direction == CircuitPortDirection.OUTPUT }) fail(
+                module.syntax.location,
+                "module has no outputs"
+            )
         }
     }
 
     private fun elaborate(
-        module: ModuleSyntax,
+        module: SpecializedModule,
         builder: BooleanNetlistBuilder,
         inputs: Map<String, Value>,
-        callStack: List<String>,
+        callStack: List<SpecializationKey>,
         applyTerminalPlacement: Boolean,
     ): Map<String, Value> {
         val environment = Environment()
+        module.arguments.forEach { (name, value) -> environment.bindings[name] = Binding(Value.Integer(value), false) }
         inputs.forEach { (name, value) -> environment.bindings[name] = Binding(value, mutable = false) }
-        module.ports.filter { it.direction == PortDirection.INPUT && it.group != null }
-            .groupBy { checkNotNull(it.group) }
+        module.ports.filter { it.syntax.direction == PortDirection.INPUT && it.syntax.group != null }
+            .groupBy { checkNotNull(it.syntax.group) }
             .forEach { (group, ports) ->
                 environment.placementTargets[group] = Value.Signals(
-                    ports.flatMap { port -> (inputs.getValue(port.name) as Value.Signals).signals },
+                    ports.flatMap { port -> (inputs.getValue(port.syntax.name) as Value.Signals).signals },
                 )
             }
-        val outputPorts = module.ports.filter { it.direction == PortDirection.OUTPUT }
+        val outputPorts = module.ports.filter { it.syntax.direction == PortDirection.OUTPUT }
         val outputs = outputPorts.associate { port ->
-            port.name to OutputBinding(port, MutableList(port.width) { null })
+            port.syntax.name to OutputBinding(port.syntax, MutableList(port.width) { null })
         }
-        execute(module.body, environment, outputs, builder, callStack)
+        execute(module.syntax.body, environment, outputs, builder, callStack)
         val result = outputs.mapValues { (_, output) ->
             val missing = output.signals.indices.filter { output.signals[it] == null }
             if (missing.isNotEmpty()) {
@@ -124,7 +177,7 @@ internal class Elaborator(
             }
             Value.Signals(output.signals.map(::checkNotNull))
         }
-        if (applyTerminalPlacement) applyPortPlacement(module, builder, inputs + result)
+        if (applyTerminalPlacement) applyPortPlacement(module.syntax, builder, inputs + result)
         return result
     }
 
@@ -133,7 +186,7 @@ internal class Elaborator(
         parent: Environment,
         outputs: Map<String, OutputBinding>,
         builder: BooleanNetlistBuilder,
-        callStack: List<String>,
+        callStack: List<SpecializationKey>,
     ) {
         val environment = Environment(parent)
         block.statements.forEach { statement ->
@@ -148,8 +201,14 @@ internal class Elaborator(
                     val value = evaluate(statement.initializer, environment, outputs, builder, callStack)
                     if (statement.attributes.isNotEmpty()) {
                         val placement = placementAttributes(statement.attributes)
-                        if (placement.edge != null) fail(statement.location, "#[edge] is only supported on top-level I/O")
-                        if (placement.panel) fail(statement.location, "#[panel] is only supported on top-level I/O groups")
+                        if (placement.edge != null) fail(
+                            statement.location,
+                            "#[edge] is only supported on top-level I/O"
+                        )
+                        if (placement.panel) fail(
+                            statement.location,
+                            "#[panel] is only supported on top-level I/O groups"
+                        )
                         val targets = placement.near.flatMapTo(linkedSetOf()) { target ->
                             val targetValue = environment.find(target)?.value ?: environment.findPlacementTarget(target)
                             ?: fail(statement.location, "unknown placement target '$target'")
@@ -159,20 +218,33 @@ internal class Elaborator(
                     }
                     environment.bindings[statement.name] = Binding(value, statement.mutable)
                 }
+
                 is AssignmentSyntax -> assign(statement, environment, outputs, builder, callStack)
                 is ForSyntax -> {
                     val first = integer(statement.first, environment, outputs, builder, callStack)
                     val parsedEnd = integer(statement.end, environment, outputs, builder, callStack)
-                    val endExclusive = if (statement.inclusive) parsedEnd + 1 else parsedEnd
+                    val endExclusive = if (statement.inclusive) checked(statement.location, "loop bound") {
+                        Math.addExact(parsedEnd, 1)
+                    } else parsedEnd
                     if (first > endExclusive) fail(statement.location, "loop range must count upward")
-                    repeat(endExclusive - first) { offset ->
+                    val iterations = checked(statement.location, "loop range") {
+                        Math.subtractExact(endExclusive, first)
+                    }
+                    repeat(iterations) { offset ->
                         val iteration = Environment(environment)
-                        iteration.bindings[statement.index] = Binding(Value.Integer(first + offset), mutable = false)
+                        val index = checked(statement.location, "loop index") { Math.addExact(first, offset) }
+                        iteration.bindings[statement.index] = Binding(Value.Integer(index), mutable = false)
                         execute(statement.body, iteration, outputs, builder, callStack)
                     }
                 }
+
                 is BlockSyntax -> execute(statement, environment, outputs, builder, callStack)
-                is ExpressionSyntax -> fail(statement.location, "unused expression")
+                is ExpressionSyntax -> {
+                    val value = evaluate(statement, environment, outputs, builder, callStack)
+                    if (value !is Value.Bundle || value.outputs.isNotEmpty()) {
+                        fail(statement.location, "unused expression")
+                    }
+                }
             }
         }
     }
@@ -182,7 +254,7 @@ internal class Elaborator(
         environment: Environment,
         outputs: Map<String, OutputBinding>,
         builder: BooleanNetlistBuilder,
-        callStack: List<String>,
+        callStack: List<SpecializationKey>,
     ) {
         val value = evaluate(assignment.value, environment, outputs, builder, callStack)
         when (val target = assignment.target) {
@@ -195,6 +267,7 @@ internal class Elaborator(
                 if (!binding.mutable) fail(target.location, "'${target.name}' is immutable")
                 binding.value = value
             }
+
             is IndexSyntax -> {
                 val name = target.target as? NameSyntax
                     ?: fail(target.location, "only a named bus can be assigned by index")
@@ -209,8 +282,10 @@ internal class Elaborator(
                 val assigned = value as? Value.Signals ?: fail(assignment.value.location, "expected a bit")
                 if (index !in signals.signals.indices) fail(target.location, "index $index is out of bounds")
                 if (assigned.signals.size != 1) fail(assignment.value.location, "a bus cannot be assigned to one bit")
-                binding.value = Value.Signals(signals.signals.toMutableList().also { it[index] = assigned.signals.single() })
+                binding.value =
+                    Value.Signals(signals.signals.toMutableList().also { it[index] = assigned.signals.single() })
             }
+
             else -> fail(target.location, "assignment target must be a signal or bus bit")
         }
     }
@@ -242,13 +317,15 @@ internal class Elaborator(
         environment: Environment,
         outputs: Map<String, OutputBinding>,
         builder: BooleanNetlistBuilder,
-        callStack: List<String>,
+        callStack: List<SpecializationKey>,
     ): Value = when (expression) {
         is IntegerSyntax -> Value.Integer(expression.value)
+        is BooleanSyntax -> Value.Signals(listOf(builder.constant(expression.value)))
         is NameSyntax -> {
             if (outputs.containsKey(expression.name)) fail(expression.location, "outputs cannot be read while building")
             environment.find(expression.name)?.value ?: fail(expression.location, "unknown signal '${expression.name}'")
         }
+
         is IndexSyntax -> {
             val target = evaluate(expression.target, environment, outputs, builder, callStack)
             val signals = target as? Value.Signals ?: fail(expression.target.location, "only a bus can be indexed")
@@ -256,30 +333,21 @@ internal class Elaborator(
             if (index !in signals.signals.indices) fail(expression.location, "index $index is out of bounds")
             Value.Signals(listOf(signals.signals[index]))
         }
+
         is AccessSyntax -> {
             val target = evaluate(expression.target, environment, outputs, builder, callStack)
             val bundle = target as? Value.Bundle ?: fail(expression.target.location, "only a module result has outputs")
-            bundle.outputs[expression.member] ?: fail(expression.location, "module has no output '${expression.member}'")
+            bundle.outputs[expression.member] ?: fail(
+                expression.location,
+                "module has no output '${expression.member}'"
+            )
         }
-        is UnarySyntax -> {
-            val operand = signals(evaluate(expression.operand, environment, outputs, builder, callStack), expression.location)
-            Value.Signals(operand.map(builder::not))
-        }
+
+        is UnarySyntax -> unary(expression, environment, outputs, builder, callStack)
         is BinarySyntax -> {
-            val left = signals(evaluate(expression.left, environment, outputs, builder, callStack), expression.left.location)
-            val right = signals(evaluate(expression.right, environment, outputs, builder, callStack), expression.right.location)
-            if (left.size != right.size) {
-                fail(expression.location, "gate operands have widths ${left.size} and ${right.size}")
-            }
-            Value.Signals(left.zip(right) { a, b ->
-                when (expression.operator) {
-                    TokenType.AMP, TokenType.AND -> builder.and(a, b)
-                    TokenType.PIPE, TokenType.OR -> builder.or(a, b)
-                    TokenType.CARET -> builder.xor(a, b)
-                    else -> error("unexpected gate operator ${expression.operator}")
-                }
-            })
+            binary(expression, environment, outputs, builder, callStack)
         }
+
         is IfSyntax -> {
             val select = signals(
                 evaluate(expression.condition, environment, outputs, builder, callStack),
@@ -301,6 +369,7 @@ internal class Elaborator(
                 builder.mux(select.single(), whenFalse, whenTrue)
             })
         }
+
         is CallSyntax -> call(expression, environment, outputs, builder, callStack)
     }
 
@@ -309,19 +378,54 @@ internal class Elaborator(
         environment: Environment,
         outputs: Map<String, OutputBinding>,
         builder: BooleanNetlistBuilder,
-        callStack: List<String>,
+        callStack: List<SpecializationKey>,
     ): Value {
-        val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
         when (call.name) {
+            "clog2" -> {
+                if (call.parameters.isNotEmpty() || call.arguments.size != 1) {
+                    fail(call.location, "clog2(value) expects one integer argument")
+                }
+                val value = integer(call.arguments.single(), environment, outputs, builder, callStack)
+                if (value <= 0) fail(call.location, "clog2 expects a positive argument")
+                return Value.Integer(Int.SIZE_BITS - Integer.numberOfLeadingZeros(value - 1))
+            }
+
+            "const_bits" -> {
+                if (call.parameters.size != 1 || call.arguments.size != 1) {
+                    fail(call.location, "const_bits<N>(value) expects one width and one value")
+                }
+                val width = integer(call.parameters.single(), environment, outputs, builder, callStack)
+                val value = integer(call.arguments.single(), environment, outputs, builder, callStack)
+                if (width !in 1..ULong.SIZE_BITS) {
+                    fail(call.parameters.single().location, "constant width must be between 1 and ${ULong.SIZE_BITS}")
+                }
+                if (value < 0 || (width < Int.SIZE_BITS && value.toLong() >= (1L shl width))) {
+                    fail(call.arguments.single().location, "constant value $value does not fit $width bits")
+                }
+                return Value.Signals(
+                    List(width) { bit -> builder.constant(bit < Int.SIZE_BITS && value and (1 shl bit) != 0) },
+                )
+            }
+
             "latch" -> {
+                if (call.parameters.isNotEmpty()) fail(call.location, "latch does not accept parameters")
+                val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
                 if (arguments.size != 2 || arguments.any { it !is Value.Signals || it.signals.size != 1 }) {
                     fail(call.location, "latch(data, hold) needs two bits")
                 }
                 return Value.Signals(
-                    listOf(builder.latch((arguments[0] as Value.Signals).signals.single(), (arguments[1] as Value.Signals).signals.single())),
+                    listOf(
+                        builder.latch(
+                            (arguments[0] as Value.Signals).signals.single(),
+                            (arguments[1] as Value.Signals).signals.single()
+                        )
+                    ),
                 )
             }
+
             "mux" -> {
+                if (call.parameters.isNotEmpty()) fail(call.location, "mux does not accept parameters")
+                val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
                 if (arguments.size != 3) fail(call.location, "mux(select, low, high) needs three arguments")
                 val select = signals(arguments[0], call.location)
                 val low = signals(arguments[1], call.location)
@@ -333,22 +437,212 @@ internal class Elaborator(
             }
         }
 
-        val module = modules[call.name] ?: fail(call.location, "unknown gate or module '${call.name}'")
-        if (module.name in callStack) {
-            fail(call.location, "recursive module call ${callStack.plus(module.name).joinToString(" -> ")}")
+        val parameterValues = call.parameters.map { integer(it, environment, outputs, builder, callStack) }
+        cellLibrary.provider(call.name)?.let {
+            val cell = try {
+                cellLibrary.specialize(call.name, parameterValues)
+            } catch (exception: IllegalArgumentException) {
+                fail(call.location, exception.message ?: "invalid ${call.name} specialization")
+            }
+            val inputPorts = cell.logicalType.ports.filter { it.direction == CellPortDirection.INPUT }
+            val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
+            if (arguments.size != inputPorts.size) {
+                fail(call.location, "${call.name} needs ${inputPorts.size} inputs, got ${arguments.size}")
+            }
+            val bound = inputPorts.zip(arguments).associate { (port, value) ->
+                val connected = signals(value, call.location)
+                if (connected.size != port.width) {
+                    fail(call.location, "${call.name}.${port.name} needs ${port.width} bits, got ${connected.size}")
+                }
+                port.name to connected
+            }
+            val result = builder.instance(cell.logicalType, bound)
+            return when (result.size) {
+                0 -> Value.Bundle(emptyMap())
+                1 -> Value.Signals(result.values.single())
+                else -> Value.Bundle(result.mapValues { Value.Signals(it.value) })
+            }
         }
-        val inputPorts = module.ports.filter { it.direction == PortDirection.INPUT }
+
+        val module = modules[call.name] ?: fail(call.location, "unknown gate, module, or library cell '${call.name}'")
+        val specialized = specialize(module, parameterValues, call.location)
+        if (callStack.any { it.module == module.name }) {
+            fail(
+                call.location,
+                "recursive module specialization ${(callStack + specialized.key).joinToString(" -> ")}",
+            )
+        }
+        val inputPorts = specialized.ports.filter { it.syntax.direction == PortDirection.INPUT }
+        val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
         if (arguments.size != inputPorts.size) {
             fail(call.location, "${module.name} needs ${inputPorts.size} inputs, got ${arguments.size}")
         }
         val bound = inputPorts.zip(arguments).associate { (port, value) ->
             val connected = signals(value, call.location)
             if (connected.size != port.width) {
-                fail(call.location, "${module.name}.${port.name} needs ${port.width} bits, got ${connected.size}")
+                fail(
+                    call.location,
+                    "${module.name}.${port.syntax.name} needs ${port.width} bits, got ${connected.size}"
+                )
             }
-            port.name to Value.Signals(connected)
+            port.syntax.name to Value.Signals(connected)
         }
-        return Value.Bundle(elaborate(module, builder, bound, callStack + module.name, applyTerminalPlacement = false))
+        return Value.Bundle(
+            elaborate(specialized, builder, bound, callStack + specialized.key, applyTerminalPlacement = false),
+        )
+    }
+
+    private fun unary(
+        expression: UnarySyntax,
+        environment: Environment,
+        outputs: Map<String, OutputBinding>,
+        builder: BooleanNetlistBuilder,
+        callStack: List<SpecializationKey>,
+    ): Value {
+        val operand = evaluate(expression.operand, environment, outputs, builder, callStack)
+        return when (expression.operator) {
+            TokenType.TILDE, TokenType.BANG -> Value.Signals(signals(operand, expression.location).map(builder::not))
+            TokenType.PLUS -> Value.Integer(integerValue(operand, expression.location))
+            TokenType.MINUS -> Value.Integer(checked(expression.location, "integer negation") {
+                Math.negateExact(integerValue(operand, expression.location))
+            })
+
+            else -> error("unexpected unary operator ${expression.operator}")
+        }
+    }
+
+    private fun binary(
+        expression: BinarySyntax,
+        environment: Environment,
+        outputs: Map<String, OutputBinding>,
+        builder: BooleanNetlistBuilder,
+        callStack: List<SpecializationKey>,
+    ): Value {
+        val leftValue = evaluate(expression.left, environment, outputs, builder, callStack)
+        val rightValue = evaluate(expression.right, environment, outputs, builder, callStack)
+        if (expression.operator in INTEGER_OPERATORS) {
+            val left = integerValue(leftValue, expression.left.location)
+            val right = integerValue(rightValue, expression.right.location)
+            return Value.Integer(checked(expression.location, "integer expression") {
+                when (expression.operator) {
+                    TokenType.PLUS -> Math.addExact(left, right)
+                    TokenType.MINUS -> Math.subtractExact(left, right)
+                    TokenType.STAR -> Math.multiplyExact(left, right)
+                    TokenType.SLASH -> {
+                        require(right != 0) { "division by zero" }
+                        require(left != Int.MIN_VALUE || right != -1) { "integer overflow" }
+                        left / right
+                    }
+
+                    TokenType.PERCENT -> {
+                        require(right != 0) { "division by zero" }
+                        left % right
+                    }
+
+                    else -> error("unexpected integer operator ${expression.operator}")
+                }
+            })
+        }
+        val left = signals(leftValue, expression.left.location)
+        val right = signals(rightValue, expression.right.location)
+        if (left.size != right.size) {
+            fail(expression.location, "gate operands have widths ${left.size} and ${right.size}")
+        }
+        return Value.Signals(left.zip(right) { a, b ->
+            when (expression.operator) {
+                TokenType.AMP, TokenType.AND -> builder.and(a, b)
+                TokenType.PIPE, TokenType.OR -> builder.or(a, b)
+                TokenType.CARET -> builder.xor(a, b)
+                else -> error("unexpected gate operator ${expression.operator}")
+            }
+        })
+    }
+
+    private fun specialize(module: ModuleSyntax, values: List<Int>, location: Token): SpecializedModule {
+        if (values.size > module.parameters.size) {
+            fail(location, "${module.name} accepts ${module.parameters.size} parameters, got ${values.size}")
+        }
+        return specialize(
+            module,
+            module.parameters.take(values.size).mapIndexed { index, parameter -> parameter.name to values[index] }
+                .toMap(),
+            location,
+        )
+    }
+
+    private fun specialize(module: ModuleSyntax, supplied: Map<String, Int>, location: Token): SpecializedModule {
+        supplied.keys.firstOrNull { suppliedName -> module.parameters.none { it.name == suppliedName } }
+            ?.let { unknown ->
+                fail(location, "${module.name} has no parameter '$unknown'")
+            }
+        val arguments = linkedMapOf<String, Int>()
+        module.parameters.forEach { parameter ->
+            arguments[parameter.name] = supplied[parameter.name] ?: parameter.default?.let { default ->
+                constantInteger(default, arguments)
+            } ?: fail(location, "${module.name} needs parameter '${parameter.name}'")
+        }
+        val key = SpecializationKey(module.name, module.parameters.map { arguments.getValue(it.name) })
+        return specializations.getOrPut(key) {
+            val ports = module.ports.map { port ->
+                val width = constantInteger(port.width, arguments)
+                if (width !in 1..ULong.SIZE_BITS) {
+                    fail(port.width.location, "bus width must be between 1 and ${ULong.SIZE_BITS}, got $width")
+                }
+                ResolvedPort(port, width)
+            }
+            SpecializedModule(module, arguments.toMap(), ports, key)
+        }
+    }
+
+    private fun constantInteger(expression: ExpressionSyntax, values: Map<String, Int>): Int = when (expression) {
+        is IntegerSyntax -> expression.value
+        is NameSyntax -> values[expression.name]
+            ?: fail(expression.location, "unknown compile-time integer '${expression.name}'")
+
+        is UnarySyntax -> {
+            val operand = constantInteger(expression.operand, values)
+            when (expression.operator) {
+                TokenType.PLUS -> operand
+                TokenType.MINUS -> checked(expression.location, "integer negation") { Math.negateExact(operand) }
+                else -> fail(expression.location, "expected a compile-time integer")
+            }
+        }
+
+        is BinarySyntax -> {
+            if (expression.operator !in INTEGER_OPERATORS) fail(expression.location, "expected a compile-time integer")
+            val left = constantInteger(expression.left, values)
+            val right = constantInteger(expression.right, values)
+            checked(expression.location, "integer expression") {
+                when (expression.operator) {
+                    TokenType.PLUS -> Math.addExact(left, right)
+                    TokenType.MINUS -> Math.subtractExact(left, right)
+                    TokenType.STAR -> Math.multiplyExact(left, right)
+                    TokenType.SLASH -> {
+                        require(right != 0) { "division by zero" }
+                        require(left != Int.MIN_VALUE || right != -1) { "integer overflow" }
+                        left / right
+                    }
+
+                    TokenType.PERCENT -> {
+                        require(right != 0) { "division by zero" }
+                        left % right
+                    }
+
+                    else -> error("unexpected integer operator ${expression.operator}")
+                }
+            }
+        }
+
+        is CallSyntax -> {
+            if (expression.name != "clog2" || expression.parameters.isNotEmpty() || expression.arguments.size != 1) {
+                fail(expression.location, "expected a compile-time integer")
+            }
+            val argument = constantInteger(expression.arguments.single(), values)
+            if (argument <= 0) fail(expression.location, "clog2 expects a positive argument")
+            Int.SIZE_BITS - Integer.numberOfLeadingZeros(argument - 1)
+        }
+
+        else -> fail(expression.location, "expected a compile-time integer")
     }
 
     private fun applyPortPlacement(
@@ -358,7 +652,8 @@ internal class Elaborator(
     ) {
         val targets = values.toMutableMap()
         module.ports.filter { it.group != null }.groupBy { checkNotNull(it.group) }.forEach { (group, ports) ->
-            targets[group] = Value.Signals(ports.flatMap { port -> placementSignals(values.getValue(port.name), port.location) })
+            targets[group] =
+                Value.Signals(ports.flatMap { port -> placementSignals(values.getValue(port.name), port.location) })
         }
         module.ports.forEach { port ->
             if (port.attributes.isEmpty()) return@forEach
@@ -367,7 +662,12 @@ internal class Elaborator(
                 val targetValue = targets[target] ?: fail(port.location, "unknown placement target '$target'")
                 placementSignals(targetValue, port.location)
             }
-            builder.placeTerminals(placementSignals(values.getValue(port.name), port.location), placement.tier, near, placement.edge)
+            builder.placeTerminals(
+                placementSignals(values.getValue(port.name), port.location),
+                placement.tier,
+                near,
+                placement.edge
+            )
         }
     }
 
@@ -388,12 +688,14 @@ internal class Elaborator(
                     if (value < 0) fail(token, "tier must be non-negative")
                     tier = value
                 }
+
                 "near" -> {
                     if (attribute.arguments.isEmpty() || attribute.arguments.any { it.type != TokenType.ID }) {
                         fail(attribute.location, "#[near] expects one or more placement target names")
                     }
                     attribute.arguments.forEach { near += it.value }
                 }
+
                 "edge" -> {
                     if (edge != null) fail(attribute.location, "duplicate #[edge] attribute")
                     if (attribute.arguments.size != 1 || attribute.arguments.single().type != TokenType.ID) {
@@ -404,9 +706,13 @@ internal class Elaborator(
                         "south" -> InterfaceEdge.SOUTH
                         "east" -> InterfaceEdge.EAST
                         "west" -> InterfaceEdge.WEST
-                        else -> fail(attribute.arguments.single(), "invalid edge '$value'; expected north, south, east, or west")
+                        else -> fail(
+                            attribute.arguments.single(),
+                            "invalid edge '$value'; expected north, south, east, or west"
+                        )
                     }
                 }
+
                 "panel" -> {
                     if (panel) fail(attribute.location, "duplicate #[panel] attribute")
                     if (attribute.arguments.isNotEmpty()) {
@@ -414,6 +720,7 @@ internal class Elaborator(
                     }
                     panel = true
                 }
+
                 else -> fail(attribute.location, "unknown placement attribute '#[${attribute.name}]'")
             }
         }
@@ -443,9 +750,20 @@ internal class Elaborator(
         environment: Environment,
         outputs: Map<String, OutputBinding>,
         builder: BooleanNetlistBuilder,
-        callStack: List<String>,
+        callStack: List<SpecializationKey>,
     ): Int = (evaluate(expression, environment, outputs, builder, callStack) as? Value.Integer)?.value
         ?: fail(expression.location, "expected a compile-time integer")
+
+    private fun integerValue(value: Value, location: Token): Int =
+        (value as? Value.Integer)?.value ?: fail(location, "expected a compile-time integer")
+
+    private fun checked(location: Token, description: String, operation: () -> Int): Int = try {
+        operation()
+    } catch (exception: ArithmeticException) {
+        fail(location, "$description overflows 32-bit signed integers")
+    } catch (exception: IllegalArgumentException) {
+        fail(location, exception.message ?: "invalid $description")
+    }
 
     private fun fail(location: Token, message: String): Nothing {
         reporter.error(message, location)
@@ -464,8 +782,23 @@ internal class Elaborator(
         val edge: InterfaceEdge?,
         val panel: Boolean,
     )
+
     private data class Binding(var value: Value, val mutable: Boolean)
     private data class OutputBinding(val port: PortSyntax, val signals: MutableList<Signal?>)
+
+    private data class ResolvedPort(val syntax: PortSyntax, val width: Int)
+
+    private data class SpecializedModule(
+        val syntax: ModuleSyntax,
+        val arguments: Map<String, Int>,
+        val ports: List<ResolvedPort>,
+        val key: SpecializationKey,
+    )
+
+    private data class SpecializationKey(val module: String, val parameters: List<Int>) {
+        override fun toString(): String =
+            if (parameters.isEmpty()) module else "$module<${parameters.joinToString(", ")}>"
+    }
 
     private class Environment(private val parent: Environment? = null) {
         val bindings: MutableMap<String, Binding> = linkedMapOf()
@@ -475,4 +808,14 @@ internal class Elaborator(
     }
 
     private class ElaborationError : RuntimeException()
+
+    private companion object {
+        val INTEGER_OPERATORS = setOf(
+            TokenType.PLUS,
+            TokenType.MINUS,
+            TokenType.STAR,
+            TokenType.SLASH,
+            TokenType.PERCENT,
+        )
+    }
 }

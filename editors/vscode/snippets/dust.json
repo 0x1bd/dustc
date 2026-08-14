@@ -20,6 +20,18 @@
     "description": "Unrolled elaboration loop",
     "body": ["for ${1:i} in ${2:0}..${3:8} {", "\t$0", "}"]
   },
+  "Parameterized module": {
+    "prefix": "moduleconst",
+    "description": "Declare a module with a compile-time integer parameter",
+    "body": [
+      "module ${1:name}<const ${2:WIDTH}: int = ${3:8}>(",
+      "\tinput ${4:a}: bits<${2:WIDTH}>,",
+      "\toutput ${5:y}: bits<${2:WIDTH}>,",
+      ") {",
+      "\t$0",
+      "}"
+    ]
+  },
   "Hardware if expression": {
     "prefix": "if",
     "description": "Select between two hardware values",

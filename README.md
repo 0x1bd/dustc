@@ -107,6 +107,12 @@ If a source file contains several modules, choose the top-level module explicitl
 dustc build design.dust -o design.schem --module cpu
 ```
 
+Specialize top-level compile-time integer parameters by repeating `--param`:
+
+```shell
+dustc build display.dust --module line_display --param WIDTH=13 --param HEIGHT=9 -o display.schem
+```
+
 For all CLI options:
 
 ```shell

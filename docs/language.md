@@ -22,6 +22,23 @@ Every module has a name, a list of inputs and outputs, and a body. A file may co
 
 Module, port, and I/O-group names use lower-case letters, digits, and `_`, and must start with a letter.
 
+## Module parameters
+
+Modules may declare compile-time integer parameters before their ports:
+
+```dust
+module inverter<const WIDTH: int = 8>(
+    input a: bits<WIDTH>,
+    output y: bits<WIDTH>,
+) {
+    for i in 0..WIDTH { y[i] = ~a[i] }
+}
+```
+
+Parameters are positional in specialized calls, and trailing parameters may have defaults. Required parameters must
+precede parameters with defaults. A specialization is written as `inverter<16>(a)`. Parameters can be used in bus
+widths, loop bounds, constants, and further specialization calls.
+
 ## Signals and buses
 
 A `bit` is one Boolean signal:
@@ -31,7 +48,7 @@ input enable: bit
 output active: bit
 ```
 
-A `bits<N>` value is a bus containing `N` signals:
+A `bits<N>` value is a bus containing `N` signals. `N` may be a compile-time integer expression:
 
 ```dust
 input value: bits<8>
@@ -193,8 +210,24 @@ let index = 3
 out = bus[index]
 ```
 
-There are currently no integer arithmetic operators. Loop indices and literal integer bindings are the main sources of
-compile-time integers.
+Checked compile-time arithmetic supports unary `+` and `-`, and binary `+`, `-`, `*`, `/`, and `%`. Multiplication,
+division, and remainder bind more tightly than addition and subtraction. Overflow, division by zero, and values outside
+the valid 1-to-64-bit bus-width range are errors.
+
+`clog2(value)` returns the ceiling of the base-two logarithm of a positive integer. For example, `clog2(13)` is 4.
+
+## Signal constants
+
+`true` and `false` are one-bit hardware constants. `const_bits<N>(value)` creates an `N`-bit,
+least-significant-bit-first
+constant and rejects values that do not fit:
+
+```dust
+let zero = false
+let mask = const_bits<8>(0b1010_0101)
+```
+
+All constant bits in one top-level circuit share one physical low source and one physical high source.
 
 ## Loops
 
@@ -320,6 +353,11 @@ A module call returns an output bundle. Read individual outputs with `.name`, su
 
 Called modules are flattened into the caller. Dust does not preserve a separate physical module instance. Recursive
 module calls are not allowed. Modules may appear in any order in the file.
+
+Bundled library cells use the same specialization syntax and flatten directly into the ordinary Boolean netlist. A
+single-output library cell returns its signal directly. A multi-output cell returns a named bundle. An outputless
+library cell may be called as a statement, which is useful for stateful hardware sinks. Calls that produce an unused
+value remain errors. A source module may not reuse the name of a bundled library cell.
 
 Placement attributes attached to a module's top-level I/O apply when that module itself is compiled as the top level.
 They are not propagated through a nested module call.
@@ -526,7 +564,7 @@ More examples are available in the [examples](../examples) directory.
 
 ## Current language boundaries
 
-Dust is intentionally small. In particular, it currently has no signal constants, arithmetic operators, bus slices,
-runtime loops, recursive modules, or user-defined types.
+Dust is intentionally small. In particular, it currently has no bus slices, runtime loops, recursive modules, or
+user-defined types.
 
 Certain features will likely be added in the future.

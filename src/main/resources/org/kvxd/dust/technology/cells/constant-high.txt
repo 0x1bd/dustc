@@ -1,0 +1,17 @@
+cell constant-high
+
+palette:
+# = support
+L = minecraft:lever[face=floor,facing=north,powered=true]
++ = dust
+
+pins:
+y output @0,1,1 drive=14
+
+layers:
+@0
+#
+#
+@1
+L
++

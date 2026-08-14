@@ -2,6 +2,7 @@ package org.kvxd.dust.netlist
 
 import org.kvxd.dust.cell.definition.CellType
 import org.kvxd.dust.cell.definition.PortDirection
+import org.kvxd.dust.cell.library.BuiltinCells
 
 class BooleanNetlistBuilder internal constructor(private val name: String) {
     private val inputs = linkedMapOf<String, Signal>()
@@ -10,6 +11,7 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
     private val instances = mutableListOf<CellInstance>()
     private val placements = mutableMapOf<Signal, SignalPlacement>()
     private val terminalPlacements = mutableMapOf<Signal, SignalPlacement>()
+    private val constants = mutableMapOf<Boolean, Signal>()
     private var nextSignal = 0
 
     fun input(name: String): Signal {
@@ -47,6 +49,14 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
 
     fun mux(select: Signal, whenFalse: Signal, whenTrue: Signal): Signal =
         gate(Primitive.MUX2, select, whenFalse, whenTrue)
+
+    fun constant(value: Boolean): Signal = constants.getOrPut(value) {
+        instance(
+            if (value) BuiltinCells.constantHigh else BuiltinCells.constantLow,
+            emptyMap(),
+            name = if (value) "constant-high" else "constant-low",
+        ).getValue("y").single()
+    }
 
     fun all(vararg terms: Signal): Signal {
         require(terms.isNotEmpty())

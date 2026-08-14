@@ -92,11 +92,11 @@
         },
         {
           "name": "keyword.declaration.dust",
-          "match": "\\b(module|input|output)\\b"
+          "match": "\\b(module|input|output|const)\\b"
         },
         {
           "name": "storage.modifier.dust",
-          "match": "\\bmut\\b"
+          "match": "\\b(mut|const)\\b"
         },
         {
           "name": "keyword.other.let.dust",
@@ -105,16 +105,20 @@
         {
           "name": "keyword.operator.word.dust",
           "match": "\\b(and|or)\\b"
+        },
+        {
+          "name": "constant.language.boolean.dust",
+          "match": "\\b(true|false)\\b"
         }
       ]
     },
     "types": {
       "name": "support.type.primitive.dust",
-      "match": "\\b(bits|bit)\\b"
+      "match": "\\b(bits|bit|int)\\b"
     },
     "builtins": {
       "name": "support.function.builtin.dust",
-      "match": "\\b(mux|latch)\\b(?=\\s*\\()"
+      "match": "\\b(mux|latch|clog2|const_bits)\\b(?=\\s*(?:<[^>]*>)?\\s*\\()"
     },
     "numbers": {
       "patterns": [
@@ -154,6 +158,10 @@
         {
           "name": "keyword.operator.logical.dust",
           "match": "[&|^~!]"
+        },
+        {
+          "name": "keyword.operator.arithmetic.dust",
+          "match": "[+*/%-]"
         },
         {
           "name": "keyword.operator.assignment.dust",

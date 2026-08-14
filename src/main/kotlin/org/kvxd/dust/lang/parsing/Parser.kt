@@ -10,6 +10,7 @@ import org.kvxd.dust.lang.syntax.AssignmentSyntax
 import org.kvxd.dust.lang.syntax.AttributeSyntax
 import org.kvxd.dust.lang.syntax.BinarySyntax
 import org.kvxd.dust.lang.syntax.BlockSyntax
+import org.kvxd.dust.lang.syntax.BooleanSyntax
 import org.kvxd.dust.lang.syntax.CallSyntax
 import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
@@ -17,6 +18,7 @@ import org.kvxd.dust.lang.syntax.IfSyntax
 import org.kvxd.dust.lang.syntax.IndexSyntax
 import org.kvxd.dust.lang.syntax.IntegerSyntax
 import org.kvxd.dust.lang.syntax.ModuleSyntax
+import org.kvxd.dust.lang.syntax.ModuleParameterSyntax
 import org.kvxd.dust.lang.syntax.NameSyntax
 import org.kvxd.dust.lang.syntax.PortDirection
 import org.kvxd.dust.lang.syntax.PortSyntax
@@ -44,6 +46,7 @@ internal class Parser(
     private fun parseModule(): ModuleSyntax {
         val location = consume(TokenType.MODULE, "expected a module declaration")
         val name = consumeIdentifier("expected a module name")
+        val parameters = if (match(TokenType.LESS)) parseModuleParameters() else emptyList()
         consume(TokenType.LPAREN, "expected '(' after module name")
         val ports = arrayListOf<PortSyntax>()
         if (!check(TokenType.RPAREN)) {
@@ -53,7 +56,23 @@ internal class Parser(
             } while (match(TokenType.COMMA))
         }
         consume(TokenType.RPAREN, "expected ')' after module ports")
-        return ModuleSyntax(name, ports, parseBlock(), location)
+        return ModuleSyntax(name, parameters, ports, parseBlock(), location)
+    }
+
+    private fun parseModuleParameters(): List<ModuleParameterSyntax> {
+        val parameters = arrayListOf<ModuleParameterSyntax>()
+        if (check(TokenType.GREATER)) error("a module parameter list cannot be empty")
+        do {
+            val location = consume(TokenType.CONST, "expected 'const' in module parameter list")
+            val name = consumeIdentifier("expected a module parameter name")
+            consume(TokenType.COLON, "expected ':' after module parameter name")
+            val type = consume(TokenType.ID, "expected parameter type 'int'")
+            if (type.value != "int") reporter.error("unknown parameter type '${type.value}'", type)
+            val default = if (match(TokenType.EQ)) parseExpression() else null
+            parameters += ModuleParameterSyntax(name, default, location)
+        } while (match(TokenType.COMMA) && !check(TokenType.GREATER))
+        consume(TokenType.GREATER, "expected '>' after module parameters")
+        return parameters
     }
 
     private fun parsePortDeclaration(attributes: List<AttributeSyntax>): List<PortSyntax> {
@@ -87,23 +106,17 @@ internal class Parser(
         val type = current()
         val typeName = consumeIdentifier("expected 'bit' or 'bits<width>'")
         val width = when (typeName) {
-            "bit" -> 1
+            "bit" -> IntegerSyntax(1, type)
             "bits" -> {
                 consume(TokenType.LESS, "expected '<' before bus width")
-                val widthToken = consume(TokenType.INT, "expected a bus width")
-                val value = parseInteger(widthToken)
+                val value = parseExpression()
                 consume(TokenType.GREATER, "expected '>' after bus width")
-                if (value !in 1..ULong.SIZE_BITS) {
-                    reporter.error("bus width must be between 1 and ${ULong.SIZE_BITS}", widthToken)
-                    1
-                } else {
-                    value
-                }
+                value
             }
 
             else -> {
                 reporter.error("unknown signal type '$typeName'", type)
-                1
+                IntegerSyntax(1, type)
             }
         }
         return PortSyntax(direction, nameToken.value, width, group, attributes, nameToken)
@@ -181,11 +194,16 @@ internal class Parser(
         TokenType.OR, TokenType.PIPE -> 1
         TokenType.CARET -> 2
         TokenType.AND, TokenType.AMP -> 3
+        TokenType.PLUS, TokenType.MINUS -> 4
+        TokenType.STAR, TokenType.SLASH, TokenType.PERCENT -> 5
         else -> 0
     }
 
     private fun parseUnary(): ExpressionSyntax {
-        if (check(TokenType.TILDE) || check(TokenType.BANG)) {
+        if (
+            check(TokenType.TILDE) || check(TokenType.BANG) ||
+            check(TokenType.PLUS) || check(TokenType.MINUS)
+        ) {
             val location = advance()
             return UnarySyntax(location.type, parseUnary(), location)
         }
@@ -221,9 +239,16 @@ internal class Parser(
                 IntegerSyntax(parseInteger(token), token)
             }
 
+            TokenType.TRUE, TokenType.FALSE -> {
+                advance()
+                BooleanSyntax(token.type == TokenType.TRUE, token)
+            }
+
             TokenType.ID -> {
                 advance()
-                if (check(TokenType.LPAREN)) CallSyntax(token.value, parseArguments(), token)
+                val parameters = if (match(TokenType.LESS)) parseSpecializationArguments() else emptyList()
+                if (check(TokenType.LPAREN)) CallSyntax(token.value, parameters, parseArguments(), token)
+                else if (parameters.isNotEmpty()) error("a specialization must be followed by a call")
                 else NameSyntax(token.value, token)
             }
 
@@ -238,6 +263,16 @@ internal class Parser(
 
             else -> error("expected a signal or gate expression")
         }
+    }
+
+    private fun parseSpecializationArguments(): List<ExpressionSyntax> {
+        val parameters = arrayListOf<ExpressionSyntax>()
+        if (check(TokenType.GREATER)) error("a specialization argument list cannot be empty")
+        do {
+            parameters += parseExpression()
+        } while (match(TokenType.COMMA))
+        consume(TokenType.GREATER, "expected '>' after specialization arguments")
+        return parameters
     }
 
     private fun parseIfExpression(): IfSyntax {

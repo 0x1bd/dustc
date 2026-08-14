@@ -40,6 +40,11 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
             '^' -> token(TokenType.CARET)
             '~' -> token(TokenType.TILDE)
             '!' -> token(TokenType.BANG)
+            '+' -> token(TokenType.PLUS)
+            '-' -> token(TokenType.MINUS)
+            '*' -> token(TokenType.STAR)
+            '/' -> token(TokenType.SLASH)
+            '%' -> token(TokenType.PERCENT)
             '#' -> token(TokenType.HASH)
             '<' -> token(TokenType.LESS)
             '>' -> token(TokenType.GREATER)
@@ -145,6 +150,7 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
     private companion object {
         val KEYWORDS: Map<String, TokenType> = mapOf(
             "module" to TokenType.MODULE,
+            "const" to TokenType.CONST,
             "input" to TokenType.INPUT,
             "output" to TokenType.OUTPUT,
             "let" to TokenType.LET,
@@ -155,6 +161,8 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
             "else" to TokenType.ELSE,
             "and" to TokenType.AND,
             "or" to TokenType.OR,
+            "true" to TokenType.TRUE,
+            "false" to TokenType.FALSE,
         )
     }
 }

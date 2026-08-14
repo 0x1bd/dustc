@@ -45,6 +45,8 @@ class CellLibrary(providers: List<CellProvider>) {
 
     fun providerNames(): Set<String> = providers.keys
 
+    fun provider(name: String): CellProvider? = providers[name]
+
     private data class CellSpecialization(
         val provider: String,
         val parameters: List<Int>,

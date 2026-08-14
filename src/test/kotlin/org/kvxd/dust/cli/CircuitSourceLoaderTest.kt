@@ -1,6 +1,7 @@
 package org.kvxd.dust.cli
 
 import java.nio.file.Path
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -20,5 +21,21 @@ class CircuitSourceLoaderTest {
 
         assertEquals(0uL, result["sum"])
         assertEquals(true, result.bit("cout"))
+    }
+
+    @Test
+    fun `specializes a generic top level from parameters`() {
+        val source = Files.createTempFile("generic-", ".dust")
+        try {
+            Files.writeString(
+                source,
+                "module generic<const WIDTH: int = 2>(input a: bits<WIDTH>, output y: bits<WIDTH>) { y = a }",
+            )
+            val circuit = CircuitSourceLoader().load(source, parameters = mapOf("WIDTH" to 7))
+            assertEquals(7, circuit.inputs.single().width)
+            assertEquals(7, circuit.outputs.single().width)
+        } finally {
+            Files.deleteIfExists(source)
+        }
     }
 }

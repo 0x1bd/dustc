@@ -28,6 +28,13 @@ class BuildCommand : Callable<Int> {
     @Option(names = ["--module"], paramLabel = "<name>", description = ["Module to build if the file declares several."])
     private var moduleName: String? = null
 
+    @Option(
+        names = ["--param"],
+        paramLabel = "<NAME=VALUE>",
+        description = ["Set a top-level integer parameter. may be repeated."],
+    )
+    private var parameterOptions: List<String> = emptyList()
+
     @Option(names = ["--terminals"], description = ["Use bare terminals instead of demo levers and lamps."])
     private var terminals: Boolean = false
 
@@ -35,7 +42,7 @@ class BuildCommand : Callable<Int> {
         val schematic = destination ?: Path.of(source.fileName.toString().removeSuffix(".dust") + ".schem")
         require(schematic.fileName.toString().endsWith(".schem")) { "output must end in .schem" }
 
-        val module = CircuitSourceLoader().load(source, moduleName)
+        val module = CircuitSourceLoader().load(source, moduleName, parseParameters())
         val progress = CliProgressRenderer(spec.commandLine().out)
         val io = if (terminals) PhysicalIo.TERMINALS else PhysicalIo.DEBUG_PADS
         val compiled = try {
@@ -51,5 +58,38 @@ class BuildCommand : Callable<Int> {
                 "${physical.routes.size} routed nets",
         )
         return 0
+    }
+
+    private fun parseParameters(): Map<String, Int> {
+        val parameters = linkedMapOf<String, Int>()
+        parameterOptions.forEach { option ->
+            val match = PARAMETER.matchEntire(option)
+                ?: error("invalid --param '$option'; expected NAME=VALUE")
+            val name = match.groupValues[1]
+            val text = match.groupValues[2]
+            require(name !in parameters) { "duplicate --param '$name'" }
+            val negative = text.startsWith('-')
+            val unsigned = (if (negative) text.drop(1) else text).replace("_", "")
+            val parsed = when {
+                unsigned.startsWith("0x", ignoreCase = true) -> unsigned.drop(2).toIntOrNull(16)
+                unsigned.startsWith("0b", ignoreCase = true) -> unsigned.drop(2).toIntOrNull(2)
+                else -> unsigned.toIntOrNull()
+            } ?: error("--param '$name' value '$text' does not fit in 32 bits")
+            parameters[name] = if (negative) {
+                try {
+                    Math.negateExact(parsed)
+                } catch (_: ArithmeticException) {
+                    error("--param '$name' value '$text' does not fit in 32 bits")
+                }
+            } else parsed
+        }
+        return parameters
+    }
+
+    private companion object {
+        val PARAMETER = Regex(
+            "([A-Za-z_][A-Za-z0-9_]*)=" +
+                    "(-?(?:[0-9][0-9_]*|0[xX][0-9A-Fa-f][0-9A-Fa-f_]*|0[bB][01][01_]*))",
+        )
     }
 }

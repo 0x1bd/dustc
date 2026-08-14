@@ -17,6 +17,8 @@ object MinecraftRedstone {
         BuiltinCells.xor2,
         BuiltinCells.mux2,
         BuiltinCells.latch,
+        BuiltinCells.constantLow,
+        BuiltinCells.constantHigh,
         BuiltinCells.inputPad,
         BuiltinCells.outputPad,
         BuiltinCells.inputTerminal,
@@ -48,6 +50,8 @@ object MinecraftRedstone {
             BuiltinCells.xor2,
             BuiltinCells.mux2,
             BuiltinCells.latch,
+            BuiltinCells.constantLow,
+            BuiltinCells.constantHigh,
         ).map { logical ->
             CellProvider.fixed(logical, physicalView = { cells.load(logical.id.value) })
         },
