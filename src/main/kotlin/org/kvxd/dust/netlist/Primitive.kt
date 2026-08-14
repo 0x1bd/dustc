@@ -11,4 +11,5 @@ enum class Primitive(val cellType: CellType) {
     MUX2(BuiltinCells.mux2),
 
     LATCH(BuiltinCells.latch),
+    DFF(BuiltinCells.dff),
 }

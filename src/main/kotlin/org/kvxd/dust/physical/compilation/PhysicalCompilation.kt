@@ -1,5 +1,6 @@
 package org.kvxd.dust.physical.compilation
 
+import org.kvxd.dust.cell.behavior.CellBehavior
 import org.kvxd.dust.device.block.BlockMatrix
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.netlist.BooleanNetlist
@@ -39,6 +40,8 @@ internal class PhysicalCompilation(
         val matrix = BlockMatrix(plan.width, plan.height, plan.length)
         plan.cells.forEach { technology.placeCell(matrix, it.cell, it.origin) }
         val sink = router.MatrixSink(matrix)
+        val unbalancedDelays = router.measureDelays(plan.rows, plan.globalTracks, netlist.clockSignals)
+        val clockPadding = clockPadding(plan.cells, unbalancedDelays)
         val routingWork = router.routeWork(plan.rows, plan.globalTracks)
         progress.onProgress(
             PhysicalProgressEvent(
@@ -52,7 +55,13 @@ internal class PhysicalCompilation(
                 approximate = true,
             ),
         )
-        router.route(plan.rows, plan.globalTracks, sink) { completed, total, signal ->
+        router.route(
+            plan.rows,
+            plan.globalTracks,
+            sink,
+            netlist.clockSignals,
+            clockPadding,
+        ) { completed, total, signal ->
             progress.onProgress(
                 PhysicalProgressEvent(
                     PhysicalProgressStage.ROUTING,
@@ -99,7 +108,7 @@ internal class PhysicalCompilation(
             val cell = plan.cells.single { it.name == "output-$name" }
             if (io == PhysicalIo.DEBUG_PADS) cell.origin + BlockPos(0, OUTPUT_PLANE_OFFSET, 0) else cell.pin("a")
         }
-        val delays = router.measureDelays(plan.rows, plan.globalTracks)
+        val delays = router.measureDelays(plan.rows, plan.globalTracks, netlist.clockSignals, clockPadding)
         progress.onProgress(
             PhysicalProgressEvent(
                 PhysicalProgressStage.ELECTRICAL_FINALIZATION,
@@ -123,6 +132,28 @@ internal class PhysicalCompilation(
                 cell.observations.map { (name, position) -> "${cell.name}.$name" to position }
             }.toMap(),
         )
+    }
+
+    private fun clockPadding(
+        cells: List<org.kvxd.dust.physical.design.PlacedCell>,
+        delays: Map<BlockPos, Int>,
+    ): Map<BlockPos, Int> = buildMap {
+        val sinks = cells.flatMap { cell ->
+            val trigger = (cell.cell.logicalType.behavior as? CellBehavior.Stateful)?.trigger
+                as? CellBehavior.Trigger.EdgeTriggered
+            if (trigger == null) emptyList() else {
+                cell.cell.pins.filter { it.port == trigger.clockPort }.map { pin ->
+                    Triple(cell.nets.getValue(pin.name), cell.pin(pin.name), cell.name)
+                }
+            }
+        }
+        sinks.groupBy { it.first }.values.forEach { clockSinks ->
+            val latest = clockSinks.maxOf { (_, position, _) -> delays[position] ?: 0 }
+            clockSinks.forEach { (_, position, _) ->
+                val padding = latest - (delays[position] ?: 0)
+                put(position, padding)
+            }
+        }
     }
 
 }

@@ -204,6 +204,7 @@ class CellDefinitionTest {
         assertEquals(ComparatorMode.SUBTRACT, cell.blocks.toMap().getValue(BlockPos(1, 1, 0))[Properties.MODE])
         assertEquals(9, (cell.blockEntities.getValue(BlockPos(2, 1, 0)) as ContainerBlockEntity).comparatorOutput)
         assertEquals(3, cell.timing.arcs.single().rise.maxTicks)
+        assertEquals(8, cell.timing.generatedClockPeriodTicks)
         assertEquals(CellImplementation.HardMacro(true, InterfaceEdge.NORTH), cell.implementation)
     }
 
@@ -353,6 +354,7 @@ class CellDefinitionTest {
             clock @0,1,0
             timing:
             arc a -> y rise=1..WIDTH fall=2..3
+            clock-period ticks=8
             placement:
             exclusive-row=true
             visible-edge=north

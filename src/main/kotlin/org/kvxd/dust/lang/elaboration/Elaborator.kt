@@ -64,6 +64,9 @@ internal class Elaborator(
             if (module.name in cellLibrary.providerNames()) {
                 fail(module.location, "module '${module.name}' is ambiguous with a bundled library cell")
             }
+            if (module.name in STORAGE_INTRINSICS) {
+                fail(module.location, "module '${module.name}' is ambiguous with a built-in storage function")
+            }
         }
     }
 
@@ -420,6 +423,33 @@ internal class Elaborator(
                             (arguments[1] as Value.Signals).signals.single()
                         )
                     ),
+                )
+            }
+
+            "register", "enabled_register", "resettable_register" -> {
+                val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
+                val expected = when (call.name) {
+                    "register" -> 2
+                    else -> 3
+                }
+                if (arguments.size != expected) fail(call.location, "${call.name} needs $expected arguments")
+                val data = signals(arguments[0], call.location)
+                if (call.parameters.size > 1) fail(call.location, "${call.name} accepts at most one width parameter")
+                call.parameters.singleOrNull()?.let { parameter ->
+                    val width = integer(parameter, environment, outputs, builder, callStack)
+                    if (width != data.size) fail(parameter.location, "${call.name} width $width does not match ${data.size}-bit data")
+                }
+                val control = arguments.drop(1).map { value ->
+                    signals(value, call.location).also { bits ->
+                        if (bits.size != 1) fail(call.location, "${call.name} control inputs must be bits")
+                    }.single()
+                }
+                return Value.Signals(
+                    when (call.name) {
+                        "register" -> data.map { builder.dff(it, control[0]) }
+                        "enabled_register" -> data.map { builder.enabledDff(it, control[0], control[1]) }
+                        else -> data.map { builder.resettableDff(it, control[0], control[1]) }
+                    },
                 )
             }
 
@@ -810,6 +840,7 @@ internal class Elaborator(
     private class ElaborationError : RuntimeException()
 
     private companion object {
+        val STORAGE_INTRINSICS = setOf("register", "enabled_register", "resettable_register")
         val INTEGER_OPERATORS = setOf(
             TokenType.PLUS,
             TokenType.MINUS,

@@ -16,6 +16,7 @@ internal const val UPWARD_GLASS_PLACEMENT_GATE_LIMIT = 128
 internal const val ROUTING_SELECTION_WEIGHT = 100L
 internal const val MAX_DIMENSION_SELECTION_WEIGHT = 600L
 internal const val AREA_SELECTION_WEIGHT = 5L
+internal const val CLOCK_SKEW_SELECTION_WEIGHT = 1_000_000L
 
 internal const val IO_SLOT_PITCH = 3
 internal const val OUTPUT_PLANE_OFFSET = 3

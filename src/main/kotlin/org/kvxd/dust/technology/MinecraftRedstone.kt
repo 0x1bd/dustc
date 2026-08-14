@@ -17,6 +17,7 @@ object MinecraftRedstone {
         BuiltinCells.xor2,
         BuiltinCells.mux2,
         BuiltinCells.latch,
+        BuiltinCells.dff,
         BuiltinCells.constantLow,
         BuiltinCells.constantHigh,
         BuiltinCells.inputPad,
@@ -36,6 +37,11 @@ object MinecraftRedstone {
             "repeater-east" to RedstoneBlocks.repeater(Direction.EAST),
             "repeater-north" to RedstoneBlocks.repeater(Direction.NORTH),
             "repeater-south" to RedstoneBlocks.repeater(Direction.SOUTH),
+            "repeater-east-2" to RedstoneBlocks.repeater(Direction.EAST, delay = 2),
+            "comparator-east-subtract" to RedstoneBlocks.comparator(
+                Direction.EAST,
+                org.kvxd.dust.device.redstone.ComparatorMode.SUBTRACT,
+            ),
             "lever-floor" to RedstoneBlocks.floorLever,
             "lamp" to RedstoneBlocks.lamp,
         ),
@@ -50,6 +56,7 @@ object MinecraftRedstone {
             BuiltinCells.xor2,
             BuiltinCells.mux2,
             BuiltinCells.latch,
+            BuiltinCells.dff,
             BuiltinCells.constantLow,
             BuiltinCells.constantHigh,
         ).map { logical ->

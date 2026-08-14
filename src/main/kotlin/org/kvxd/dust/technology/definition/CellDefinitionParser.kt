@@ -350,6 +350,7 @@ internal object CellDefinitionParser {
         if (lines.isEmpty()) return null
         val arcs = mutableListOf<TimingArc>()
         val constraints = mutableListOf<TimingConstraint>()
+        var generatedClockPeriod: Int? = null
         lines.forEach { line ->
             val parts = splitWords(line.text)
             when (parts.firstOrNull()) {
@@ -375,10 +376,17 @@ internal object CellDefinitionParser {
                         holdTicks = integer(options["hold"].orEmpty(), line.variables, line.location),
                     )
                 }
+                "clock-period", "clock_period" -> {
+                    if (generatedClockPeriod != null) line.location.error("duplicate clock-period directive")
+                    val options = options(parts.drop(1), line)
+                    val period = integer(options["ticks"].orEmpty(), line.variables, line.location)
+                    if (period <= 0) line.location.error("clock period must be positive")
+                    generatedClockPeriod = period
+                }
                 else -> line.location.error("unknown timing directive '${parts.firstOrNull().orEmpty()}'")
             }
         }
-        return CellTiming(arcs, constraints)
+        return CellTiming(arcs, constraints, generatedClockPeriod)
     }
 
     private fun delay(text: String, line: ExpandedLine): DelayRange {

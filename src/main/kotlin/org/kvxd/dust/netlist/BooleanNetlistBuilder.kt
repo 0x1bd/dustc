@@ -47,6 +47,20 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
 
     fun latch(data: Signal, hold: Signal): Signal = gate(Primitive.LATCH, data, hold)
 
+    fun dff(data: Signal, clock: Signal): Signal = gate(Primitive.DFF, data, clock)
+
+    fun enabledDff(data: Signal, enable: Signal, clock: Signal): Signal {
+        val output = wire()
+        val selected = mux(enable, output, data)
+        gateInto(Primitive.DFF, listOf(selected, clock), output)
+        return output
+    }
+
+    fun resettableDff(data: Signal, reset: Signal, clock: Signal): Signal {
+        val selected = mux(reset, data, constant(false))
+        return dff(selected, clock)
+    }
+
     fun mux(select: Signal, whenFalse: Signal, whenTrue: Signal): Signal =
         gate(Primitive.MUX2, select, whenFalse, whenTrue)
 
@@ -149,6 +163,20 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
         require(inputs.size == expected)
         require(inputs.all { it.index in 0 until nextSignal }) { "gate uses an unknown signal" }
         val output = Signal(nextSignal++)
+        gateInto(primitive, inputs.toList(), output, instanceName)
+        return output
+    }
+
+    private fun gateInto(
+        primitive: Primitive,
+        inputs: List<Signal>,
+        output: Signal,
+        instanceName: String? = null,
+    ) {
+        val expected = primitive.cellType.ports.count { it.direction == PortDirection.INPUT }
+        require(inputs.size == expected)
+        require(inputs.all { it.index in 0 until nextSignal }) { "gate uses an unknown signal" }
+        require(output.index in 0 until nextSignal) { "gate output uses an unknown signal" }
         gates += Gate(primitive, inputs.toList(), output)
         val inputPorts = primitive.cellType.ports.filter { it.direction == PortDirection.INPUT }
         val connections = buildMap {
@@ -162,6 +190,5 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
             connections,
             primitive = primitive,
         )
-        return output
     }
 }

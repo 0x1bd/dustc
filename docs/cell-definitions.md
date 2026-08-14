@@ -67,11 +67,15 @@ Physical timing can override the logical cell timing. Delay ranges are inclusive
 timing:
 arc data -> result rise=1..3 fall=1..3
 setup-hold data clock edge=rise setup=1 hold=1
+clock-period ticks=32
 
 placement:
 exclusive-row=true
 visible-edge=north
 ```
+
+`clock-period` marks a clock-producing cell as autonomous. Static timing uses that period automatically and rejects
+setup, hold, or clock-skew violations in a physical build.
 
 Adding a `placement` section makes the definition a hard macro. `visible-edge` accepts `north`, `south`, `east`, `west`,
 or `none`.

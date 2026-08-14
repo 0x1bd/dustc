@@ -52,6 +52,12 @@ class BuildCommand : Callable<Int> {
         }
         val physical = compiled.physical
         val matrix = physical.matrix
+        if (compiled.timing.minimumSafeStepTicks > 0) {
+            spec.commandLine().out.println(
+                "dustc: timing: minimum safe clock interval ${compiled.timing.minimumSafeStepTicks} ticks; " +
+                    "maximum clock skew ${compiled.timing.maximumClockSkewTicks} ticks",
+            )
+        }
         spec.commandLine().out.println(
             "dustc: wrote $schematic; ${matrix.width} x ${matrix.height} x ${matrix.length}, " +
                 "${matrix.blockCount()} blocks, ${physical.cells.size} standard cells, " +

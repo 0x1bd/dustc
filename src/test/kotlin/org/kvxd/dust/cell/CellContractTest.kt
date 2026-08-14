@@ -25,29 +25,38 @@ class CellContractTest {
             CellTypeId("test-dff"),
             listOf(
                 CellPort("d", 1, PortDirection.INPUT),
+                CellPort("clock", 1, PortDirection.INPUT),
                 CellPort("q", 1, PortDirection.OUTPUT),
             ),
-            CellBehavior.Stateful(1, CellBehavior.StateMode.EDGE_TRIGGERED) { inputs, _ ->
+            CellBehavior.Stateful(
+                1,
+                CellBehavior.Trigger.EdgeTriggered("clock", Edge.RISE),
+            ) { inputs, _ ->
                 val q = inputs.getValue("d").single()
                 CellEvaluation(mapOf("q" to booleanArrayOf(q)), booleanArrayOf(q))
             },
             CellTiming(
                 listOf(
-                    TimingArc("d", "q", rise = DelayRange(1, 1), fall = DelayRange(1, 1)),
+                    TimingArc("clock", "q", rise = DelayRange(1, 1), fall = DelayRange(1, 1)),
                 ),
-                listOf(TimingConstraint.SetupHold("d", "d", Edge.RISE, 1, 1)),
+                listOf(TimingConstraint.SetupHold("d", "clock", Edge.RISE, 1, 1)),
             ),
         )
         val counter = booleanNetlist("feedback") {
-            input("step")
+            val step = input("step")
+            val clock = input("clock")
             val q = wire()
-            val d = not(q)
-            connect(dff, mapOf("d" to listOf(d), "q" to listOf(q)))
+            val toggled = not(q)
+            val d = mux(step, q, toggled)
+            connect(dff, mapOf("d" to listOf(d), "clock" to listOf(clock), "q" to listOf(q)))
             output("q", q)
         }
         val simulator = SequentialSimulator(counter)
-        assertEquals(true, simulator.step(mapOf("step" to false)).getValue("q"))
-        assertEquals(false, simulator.step(mapOf("step" to true)).getValue("q"))
+        assertEquals(false, simulator.step(mapOf("step" to true, "clock" to false)).getValue("q"))
+        assertEquals(true, simulator.step(mapOf("step" to true, "clock" to true)).getValue("q"))
+        assertEquals(true, simulator.step(mapOf("step" to false, "clock" to true)).getValue("q"))
+        assertEquals(true, simulator.step(mapOf("step" to true, "clock" to false)).getValue("q"))
+        assertEquals(false, simulator.step(mapOf("step" to true, "clock" to true)).getValue("q"))
 
         assertFailsWith<IllegalArgumentException> {
             booleanNetlist("bad-cycle") {

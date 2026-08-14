@@ -13,9 +13,11 @@ internal data class Floorplan(
     val routingRepeaters: Long,
     val routingBlocks: Long,
     val tierCount: Int,
+    val clockSkewTicks: Int,
 ) {
     val area: Long = width.toLong() * length
     val maximumDimension: Int = maxOf(width, length)
-    val selectionCost: Long = routingBlocks * ROUTING_SELECTION_WEIGHT +
+    val selectionCost: Long = clockSkewTicks.toLong() * CLOCK_SKEW_SELECTION_WEIGHT +
+        routingBlocks * ROUTING_SELECTION_WEIGHT +
         maximumDimension.toLong() * MAX_DIMENSION_SELECTION_WEIGHT + area * AREA_SELECTION_WEIGHT
 }

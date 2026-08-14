@@ -1,5 +1,6 @@
 package org.kvxd.dust.netlist
 
+import org.kvxd.dust.cell.behavior.CellBehavior
 import org.kvxd.dust.cell.definition.PortDirection
 
 class BooleanNetlist internal constructor(
@@ -13,6 +14,11 @@ class BooleanNetlist internal constructor(
     internal val terminalPlacements: Map<Signal, SignalPlacement> = emptyMap(),
 ) {
     private val orderedCombinational: List<CellInstance>
+    val clockSignals: Set<Signal> = instances.mapNotNull { instance ->
+        val trigger = (instance.type.behavior as? CellBehavior.Stateful)?.trigger
+            as? CellBehavior.Trigger.EdgeTriggered
+        trigger?.let { instance.connections.getValue(it.clockPort).single() }
+    }.toSet()
 
     init {
         require(instances.map { it.name }.distinct().size == instances.size) { "$name has duplicate instance names" }
@@ -60,7 +66,7 @@ class BooleanNetlist internal constructor(
                     val select = state[gate.inputs[0].index]
                     (state[gate.inputs[1].index] and select.inv()) or (state[gate.inputs[2].index] and select)
                 }
-                Primitive.LATCH -> error("storage requires SequentialSimulator")
+                Primitive.LATCH, Primitive.DFF -> error("storage requires SequentialSimulator")
             }
         }
         return outputs.mapValues { (_, signal) -> state[signal.index] }

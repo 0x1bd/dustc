@@ -42,7 +42,7 @@ object BuiltinCells {
     val latch: CellType = CellType(
         CellTypeId("latch"),
         listOf(input("d"), input("hold"), output("q")),
-        CellBehavior.Stateful(1, CellBehavior.StateMode.TRANSPARENT) { inputs, previous ->
+        CellBehavior.Stateful(1, CellBehavior.Trigger.Transparent) { inputs, previous ->
             val q = if (inputs.getValue("hold").single()) previous.single() else inputs.getValue("d").single()
             CellEvaluation(mapOf("q" to booleanArrayOf(q)), booleanArrayOf(q))
         },
@@ -52,6 +52,18 @@ object BuiltinCells {
                 arc("hold", "q", 1),
             ),
             constraints = listOf(TimingConstraint.SetupHold("d", "hold", Edge.RISE, 0, 1)),
+        ),
+    )
+    val dff: CellType = CellType(
+        CellTypeId("dff"),
+        listOf(input("d"), input("clock"), output("q")),
+        CellBehavior.Stateful(1, CellBehavior.Trigger.EdgeTriggered("clock", Edge.RISE)) { inputs, _ ->
+            val q = inputs.getValue("d").single()
+            CellEvaluation(mapOf("q" to booleanArrayOf(q)), booleanArrayOf(q))
+        },
+        CellTiming(
+            arcs = listOf(arc("clock", "q", 4)),
+            constraints = listOf(TimingConstraint.SetupHold("d", "clock", Edge.RISE, 1, 2)),
         ),
     )
     val constantLow: CellType = constant("constant-low", false)

@@ -3,6 +3,9 @@
     "includes": [
       {
         "pattern": "org/kvxd/dust/technology/cells/.*\\.txt$"
+      },
+      {
+        "pattern": "org/kvxd/dust/lang/stdlib/.*$"
       }
     ]
   }

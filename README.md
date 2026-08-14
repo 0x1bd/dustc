@@ -1,6 +1,7 @@
 # dustc
 
-`dustc` compiles the [Dust hardware language](docs/language.md) into placed and routed Minecraft redstone and writes the result as a Sponge `.schem` file.
+`dustc` compiles the [Dust hardware language](docs/language.md) into placed and routed Minecraft redstone and writes the
+result as a Sponge `.schem` file.
 
 ```text
 Dust source -> Boolean netlist -> standard-cell placement -> redstone routing -> .schem
@@ -10,7 +11,8 @@ Dust source -> Boolean netlist -> standard-cell placement -> redstone routing ->
 
 ### Prebuilt binary
 
-The easiest way to use dustc is to download a binary from the [GitHub releases](https://github.com/0x1bd/dustc/releases).
+The easiest way to use dustc is to download a binary from
+the [GitHub releases](https://github.com/0x1bd/dustc/releases).
 
 Prebuilt binaries are published for:
 
@@ -154,7 +156,8 @@ After installing the extension, open the command palette and run:
 Dust: Download Latest dustc
 ```
 
-The extension stores the downloaded compiler itself. If you already built dustc locally, no download is required: when `dust.compilerPath` is empty, the extension searches in this order:
+The extension stores the downloaded compiler itself. If you already built dustc locally, no download is required: when
+`dust.compilerPath` is empty, the extension searches in this order:
 
 1. the compiler downloaded by the extension
 2. `dustc` in the workspace root
@@ -166,8 +169,10 @@ For example:
 
 ```json
 {
-    "dust.compilerPath": "/home/me/src/dustc/dustc",
-    "dust.buildArguments": ["--terminals"]
+  "dust.compilerPath": "/home/me/src/dustc/dustc",
+  "dust.buildArguments": [
+    "--terminals"
+  ]
 }
 ```
 
@@ -194,7 +199,8 @@ module inverter(
 ```
 
 Dust supports buses, Boolean operators, compile-time loops and parameters, local bindings, module composition, a bundled
-generic arithmetic/comparison library, multiplexers, latches, and physical placement attributes such as `#[near(...)]`,
+generic arithmetic/comparison library, multiplexers, latches, rising-edge registers, and physical placement attributes
+such as `#[near(...)]`,
 `#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
 
 See the [language reference](docs/language.md) for the complete syntax and semantics.
@@ -204,5 +210,5 @@ Contributor conventions are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## LLM disclosure
 
-A substantial amount of dustc was developed with the help of LLMs. The project is still directed, tested, and evaluated
-by a human.
+LLMs are used in the development of dustc, alongside code written by humans. I still make the design decisions
+and review and test LLM-generated changes.

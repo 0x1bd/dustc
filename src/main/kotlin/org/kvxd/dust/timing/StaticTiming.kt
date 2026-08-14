@@ -1,6 +1,8 @@
 package org.kvxd.dust.timing
 
+import org.kvxd.dust.cell.behavior.CellBehavior
 import org.kvxd.dust.cell.definition.PortDirection
+import org.kvxd.dust.cell.timing.TimingArc
 import org.kvxd.dust.cell.timing.TimingConstraint
 import org.kvxd.dust.netlist.CellInstance
 import org.kvxd.dust.netlist.Signal
@@ -8,56 +10,192 @@ import org.kvxd.dust.physical.design.PhysicalDesign
 import org.kvxd.dust.physical.design.PlacedCell
 
 object StaticTiming {
-    fun analyse(design: PhysicalDesign): TimingReport {
+    fun analyse(
+        design: PhysicalDesign,
+        clockPeriodTicks: Int? = null,
+        maximumClockSkewTicks: Int = 1,
+    ): TimingReport {
+        require(clockPeriodTicks == null || clockPeriodTicks > 0)
+        require(maximumClockSkewTicks >= 0)
         val cells = design.cells.associateBy { it.name }
+        val sequential = edgeTriggered(design)
+        val generatedClockPeriod = generatedClockPeriod(design, cells)
+        val effectiveClockPeriod = clockPeriodTicks ?: generatedClockPeriod
+        val clockArrivals = sequential.associateWith { instance ->
+            val trigger = edgeTrigger(instance)
+            portRouteDelay(design, cells.getValue(instance.name), trigger.clockPort)
+        }
+
         var criticalPath = 0
-        val violations = mutableListOf<HoldViolation>()
-        var worstSlack = Int.MAX_VALUE
-
-        design.netlist.inputs.forEach { (inputName, inputSignal) ->
-            val walk = propagate(design, cells, inputSignal)
-            design.netlist.outputs.values.forEach { signal ->
-                if (walk.reached[signal.index]) criticalPath = maxOf(criticalPath, walk.latest[signal.index])
+        design.netlist.inputs.values.forEach { input ->
+            val walk = propagateCombinational(design, cells, input)
+            design.netlist.outputs.values.forEach { output ->
+                if (walk.reached[output.index]) criticalPath = maxOf(criticalPath, walk.latest[output.index])
             }
+        }
 
-            design.netlist.instances.forEach { instance ->
-                val cell = cells[instance.name] ?: return@forEach
-                cell.cell.timing.constraints.forEach { constraint ->
-                    when (constraint) {
-                        is TimingConstraint.SetupHold -> {
-                            val data = portArrival(design, walk, instance, cell, constraint.dataPort, earliest = true)
-                                ?: return@forEach
-                            val clock = portArrival(design, walk, instance, cell, constraint.clockPort, earliest = false)
-                                ?: return@forEach
-                            val slack = data - (clock + constraint.holdTicks)
-                            worstSlack = minOf(worstSlack, slack)
-                            if (slack < 0) {
-                                violations += HoldViolation(instance.name, inputName, data, clock, slack)
+        val setupViolations = mutableListOf<SetupViolation>()
+        val holdViolations = mutableListOf<HoldViolation>()
+        var minimumPeriod = 0
+        var worstSetupSlack = Int.MAX_VALUE
+        var worstHoldSlack = Int.MAX_VALUE
+
+        sequential.forEach { launch ->
+            val launchCell = cells.getValue(launch.name)
+            val launchTrigger = edgeTrigger(launch)
+            val launchClock = clockArrivals.getValue(launch)
+            launch.type.ports.filter { it.direction == PortDirection.OUTPUT }.forEach { outputPort ->
+                repeat(outputPort.width) outputBits@{ outputBit ->
+                    val clockToQ = launchCell.cell.timing.arcs.filter { arc ->
+                        arc.fromPort == launchTrigger.clockPort && arc.toPort == outputPort.name &&
+                            (arc.toBit == null || arc.toBit == outputBit)
+                    }
+                    if (clockToQ.isEmpty()) return@outputBits
+                    val output = launch.connections.getValue(outputPort.name)[outputBit]
+                    val walk = propagateCombinational(
+                        design,
+                        cells,
+                        output,
+                        clockToQ.minOf { it.minDelay },
+                        clockToQ.maxOf { it.maxDelay },
+                    )
+                    sequential.forEach captureLoop@{ capture ->
+                        val captureCell = cells.getValue(capture.name)
+                        val captureClock = clockArrivals.getValue(capture)
+                        captureCell.cell.timing.constraints.filterIsInstance<TimingConstraint.SetupHold>()
+                            .filter { it.clockEdge == edgeTrigger(capture).edge }
+                            .forEach constraintLoop@{ constraint ->
+                                val earliestData = portArrival(
+                                    design,
+                                    walk,
+                                    capture,
+                                    captureCell,
+                                    constraint.dataPort,
+                                    earliest = true,
+                                ) ?: return@constraintLoop
+                                val latestData = portArrival(
+                                    design,
+                                    walk,
+                                    capture,
+                                    captureCell,
+                                    constraint.dataPort,
+                                    earliest = false,
+                                ) ?: return@constraintLoop
+                                val requiredPeriod = maxOf(
+                                    0,
+                                    launchClock + latestData + constraint.setupTicks - captureClock,
+                                )
+                                minimumPeriod = maxOf(minimumPeriod, requiredPeriod)
+                                effectiveClockPeriod?.let { period ->
+                                    val slack = period - requiredPeriod
+                                    worstSetupSlack = minOf(worstSetupSlack, slack)
+                                    if (slack < 0) {
+                                        setupViolations += SetupViolation(
+                                            capture.name,
+                                            launch.name,
+                                            requiredPeriod,
+                                            period,
+                                            slack,
+                                        )
+                                    }
+                                }
+
+                                val holdSlack = launchClock + earliestData - (captureClock + constraint.holdTicks)
+                                worstHoldSlack = minOf(worstHoldSlack, holdSlack)
+                                if (holdSlack < 0) {
+                                    holdViolations += HoldViolation(
+                                        capture.name,
+                                        launch.name,
+                                        launchClock + earliestData,
+                                        captureClock + constraint.holdTicks,
+                                        holdSlack,
+                                    )
+                                }
                             }
-                        }
                     }
                 }
             }
         }
+
+        design.netlist.inputs.forEach { (inputName, inputSignal) ->
+            val walk = propagateCombinational(design, cells, inputSignal)
+            design.netlist.instances.filter { instance ->
+                (instance.type.behavior as? CellBehavior.Stateful)?.trigger == CellBehavior.Trigger.Transparent
+            }.forEach latchLoop@{ latch ->
+                val cell = cells[latch.name] ?: return@latchLoop
+                cell.cell.timing.constraints.filterIsInstance<TimingConstraint.SetupHold>().forEach constraintLoop@{ constraint ->
+                    val data = portArrival(design, walk, latch, cell, constraint.dataPort, earliest = true)
+                        ?: return@constraintLoop
+                    val clock = portArrival(design, walk, latch, cell, constraint.clockPort, earliest = false)
+                        ?: return@constraintLoop
+                    val slack = data - (clock + constraint.holdTicks)
+                    worstHoldSlack = minOf(worstHoldSlack, slack)
+                    if (slack < 0) holdViolations += HoldViolation(latch.name, inputName, data, clock, slack)
+                }
+            }
+        }
+
+        val skewViolations = mutableListOf<ClockSkewViolation>()
+        var largestSkew = 0
+        sequential.groupBy { instance ->
+            val trigger = edgeTrigger(instance)
+            instance.connections.getValue(trigger.clockPort).single()
+        }.forEach { (clock, sinks) ->
+            if (sinks.size < 2) return@forEach
+            val ordered = sinks.map { it to clockArrivals.getValue(it) }.sortedBy { it.second }
+            val earliest = ordered.first()
+            val latest = ordered.last()
+            val skew = latest.second - earliest.second
+            largestSkew = maxOf(largestSkew, skew)
+            if (skew > maximumClockSkewTicks) {
+                skewViolations += ClockSkewViolation(
+                    clockName(design, clock),
+                    earliest.first.name,
+                    latest.first.name,
+                    earliest.second,
+                    latest.second,
+                    skew,
+                    maximumClockSkewTicks,
+                )
+            }
+        }
+
         return TimingReport(
-            criticalPath,
-            if (worstSlack == Int.MAX_VALUE) 0 else worstSlack,
-            violations,
+            criticalPathTicks = criticalPath,
+            generatedClockPeriodTicks = generatedClockPeriod,
+            minimumClockPeriodTicks = minimumPeriod,
+            worstSetupSlackTicks = if (worstSetupSlack == Int.MAX_VALUE) 0 else worstSetupSlack,
+            setupViolations = setupViolations,
+            worstHoldSlackTicks = if (worstHoldSlack == Int.MAX_VALUE) 0 else worstHoldSlack,
+            holdViolations = holdViolations,
+            maximumClockSkewTicks = largestSkew,
+            clockSkewViolations = skewViolations,
         )
     }
 
-    private fun propagate(
+    private fun edgeTriggered(design: PhysicalDesign): List<CellInstance> = design.netlist.instances.filter { instance ->
+        (instance.type.behavior as? CellBehavior.Stateful)?.trigger is CellBehavior.Trigger.EdgeTriggered
+    }
+
+    private fun edgeTrigger(instance: CellInstance): CellBehavior.Trigger.EdgeTriggered =
+        ((instance.type.behavior as CellBehavior.Stateful).trigger as CellBehavior.Trigger.EdgeTriggered)
+
+    private fun propagateCombinational(
         design: PhysicalDesign,
         cells: Map<String, PlacedCell>,
         from: Signal,
+        initialEarliest: Int = 0,
+        initialLatest: Int = 0,
     ): Walk {
         val walk = Walk(design.netlist.signals)
         walk.reached[from.index] = true
+        walk.earliest[from.index] = initialEarliest
+        walk.latest[from.index] = initialLatest
 
-        design.netlist.instances.forEach { instance ->
+        design.netlist.combinationalOrder().forEach { instance ->
             val cell = cells[instance.name] ?: return@forEach
-            instance.type.ports.filter { it.direction == PortDirection.OUTPUT }.forEach outputLoop@{ outputPort ->
-                outputPortBits@ for (outputBit in 0 until outputPort.width) {
+            instance.type.ports.filter { it.direction == PortDirection.OUTPUT }.forEach { outputPort ->
+                repeat(outputPort.width) outputBits@{ outputBit ->
                     val outputSignal = instance.connections.getValue(outputPort.name)[outputBit]
                     var earliest = Int.MAX_VALUE
                     var latest = Int.MIN_VALUE
@@ -75,7 +213,7 @@ object StaticTiming {
                             latest = maxOf(latest, walk.latest[inputSignal.index] + wire + arc.maxDelay)
                         }
                     }
-                    if (latest == Int.MIN_VALUE) continue@outputPortBits
+                    if (latest == Int.MIN_VALUE) return@outputBits
                     walk.reached[outputSignal.index] = true
                     walk.earliest[outputSignal.index] = earliest
                     walk.latest[outputSignal.index] = latest
@@ -85,10 +223,8 @@ object StaticTiming {
         return walk
     }
 
-    private val org.kvxd.dust.cell.timing.TimingArc.minDelay: Int
-        get() = minOf(rise.minTicks, fall.minTicks)
-    private val org.kvxd.dust.cell.timing.TimingArc.maxDelay: Int
-        get() = maxOf(rise.maxTicks, fall.maxTicks)
+    private val TimingArc.minDelay: Int get() = minOf(rise.minTicks, fall.minTicks)
+    private val TimingArc.maxDelay: Int get() = maxOf(rise.maxTicks, fall.maxTicks)
 
     private fun portArrival(
         design: PhysicalDesign,
@@ -107,8 +243,27 @@ object StaticTiming {
         return if (earliest) arrivals.minOrNull() else arrivals.maxOrNull()
     }
 
+    private fun portRouteDelay(design: PhysicalDesign, cell: PlacedCell, port: String): Int =
+        cell.cell.pins.filter { it.port == port }.maxOf { pin -> design.routeDelayTicks[cell.pin(pin.name)] ?: 0 }
+
     private fun physicalPin(cell: PlacedCell, port: String, bit: Int): String =
         cell.cell.pins.single { it.port == port && it.bit == bit }.name
+
+    private fun clockName(design: PhysicalDesign, signal: Signal): String =
+        design.netlist.inputs.entries.singleOrNull { it.value == signal }?.key ?: "signal-${signal.index}"
+
+    private fun generatedClockPeriod(design: PhysicalDesign, cells: Map<String, PlacedCell>): Int? {
+        val periods = design.netlist.clockSignals.mapNotNull { clock ->
+            design.netlist.instances.firstNotNullOfOrNull { instance ->
+                val drivesClock = instance.type.ports.filter { it.direction == PortDirection.OUTPUT }.any { port ->
+                    instance.connections.getValue(port.name).any { it == clock }
+                }
+                if (drivesClock) cells[instance.name]?.cell?.timing?.generatedClockPeriodTicks else null
+            }
+        }.distinct()
+        require(periods.size <= 1) { "multiple generated clock periods are not yet supported: $periods" }
+        return periods.singleOrNull()
+    }
 
     private class Walk(signals: Int) {
         val reached: BooleanArray = BooleanArray(signals)

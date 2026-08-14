@@ -1,9 +1,19 @@
 package org.kvxd.dust.cell.behavior
 
+import org.kvxd.dust.cell.timing.Edge
+
 sealed interface CellBehavior {
     val stateBits: Int
 
-    enum class StateMode { TRANSPARENT, EDGE_TRIGGERED }
+    sealed interface Trigger {
+        data object Transparent : Trigger
+
+        data class EdgeTriggered(val clockPort: String, val edge: Edge) : Trigger {
+            init {
+                require(clockPort.isNotBlank())
+            }
+        }
+    }
 
     fun evaluate(
         inputs: Map<String, BooleanArray>,
@@ -26,7 +36,7 @@ sealed interface CellBehavior {
 
     class Stateful(
         override val stateBits: Int,
-        val mode: StateMode,
+        val trigger: Trigger,
         private val evaluator: (
             Map<String, BooleanArray>,
             BooleanArray,

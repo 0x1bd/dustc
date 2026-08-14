@@ -2,6 +2,7 @@ package org.kvxd.dust.physical.compilation
 
 import kotlin.math.abs
 import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.cell.behavior.CellBehavior
 import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.InterfaceEdge
 import org.kvxd.dust.netlist.Signal
@@ -68,7 +69,7 @@ internal class PhysicalFloorplanner(
         )
         val activeGlobalPlaneY = activeRouteHeight + GLOBAL_PLANE_CLEARANCE
         val globalTracks = assignGlobalTracks(
-            planGlobalTracks(globalSignals, localConnections),
+            planGlobalTracks(globalSignals, localConnections, netlist.clockSignals),
             cellWidth,
             blockedGlobalViaColumns,
             activeGlobalPlaneY,
@@ -303,7 +304,16 @@ internal class PhysicalFloorplanner(
 
         val criticality = signalCriticality(netlist)
         val timingCost = globalSignals.sumOf { criticality[it.index].toLong() }
-        val routing = router.routingCost(rows, globalTracks)
+        val (routing, routeDelays) = router.routingEvaluation(rows, globalTracks, netlist.clockSignals)
+        val placedConnections = connections(cells)
+        val clockSkew = netlist.clockSignals.maxOfOrNull { signal ->
+            val arrivals = placedConnections.getValue(signal).mapNotNull { connected ->
+                val trigger = (connected.cell.cell.logicalType.behavior as? CellBehavior.Stateful)?.trigger
+                    as? CellBehavior.Trigger.EdgeTriggered
+                if (trigger?.clockPort == connected.pin.port) routeDelays[connected.position] ?: 0 else null
+            }
+            (arrivals.maxOrNull() ?: 0) - (arrivals.minOrNull() ?: 0)
+        } ?: 0
         return Floorplan(
             rows,
             cells,
@@ -315,6 +325,7 @@ internal class PhysicalFloorplanner(
             routing.repeaters,
             routing.blocks,
             tierCount,
+            clockSkew,
         )
     }
 
@@ -322,13 +333,16 @@ internal class PhysicalFloorplanner(
     private fun planGlobalTracks(
         globalSignals: List<Signal>,
         connections: Map<Signal, List<ConnectedPin>>,
+        clockSignals: Set<Signal>,
     ): List<GlobalTrackRequest> = globalSignals.flatMap { signal ->
         val pins = checkNotNull(connections[signal])
         val driver = pins.single { it.pin.direction == PinDirection.OUTPUT }
         val sinkPoints = pins.filter { it.pin.direction == PinDirection.INPUT && it.cell.row != driver.cell.row }
             .map { GlobalSinkPoint(it.globalSinkKey(), it.cell.row, it.position.x) }
             .sortedWith(compareBy<GlobalSinkPoint> { it.x }.thenBy { it.row }.thenBy { it.key.cell })
-        val partitions = globalTrackPartitions(driver.cell.row, driver.position.x, sinkPoints)
+        val partitions = if (signal in clockSignals) listOf(sinkPoints) else {
+            globalTrackPartitions(driver.cell.row, driver.position.x, sinkPoints)
+        }
         partitions.mapIndexed { ordinal, group ->
             val xs = (group.map { it.x } + driver.position.x).sorted()
             GlobalTrackRequest(

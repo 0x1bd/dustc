@@ -35,7 +35,7 @@ class CellLibraryTest {
                     Primitive.OR2 -> or(inputs[0], inputs[1])
                     Primitive.XOR2 -> xor(inputs[0], inputs[1])
                     Primitive.MUX2 -> mux(inputs[0], inputs[1], inputs[2])
-                    Primitive.LATCH -> error("sequential")
+                    Primitive.LATCH, Primitive.DFF -> error("sequential")
                 }
                 output("y", out)
             }

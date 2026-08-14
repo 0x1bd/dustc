@@ -14,6 +14,14 @@ class CellType(
         require(ports.isNotEmpty()) { "$id has no ports" }
         require(ports.map { it.name }.distinct().size == ports.size) { "$id has duplicate ports" }
         val byName = ports.associateBy { it.name }
+        (behavior as? CellBehavior.Stateful)?.trigger?.let { trigger ->
+            if (trigger is CellBehavior.Trigger.EdgeTriggered) {
+                requireInputPort(byName, trigger.clockPort, id)
+                require(byName.getValue(trigger.clockPort).width == 1) {
+                    "$id clock port '${trigger.clockPort}' must be one bit"
+                }
+            }
+        }
         timing.arcs.forEach { arc ->
             require(arc.fromPort in byName && arc.toPort in byName) { "$id has an arc for an unknown port" }
             val from = byName.getValue(arc.fromPort)

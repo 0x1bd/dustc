@@ -21,6 +21,8 @@ internal class PhysicalRouter(
         rows: List<PlacedRow>,
         globalTracks: List<GlobalTrack>,
         sink: RouteSink,
+        clockSignals: Set<Signal> = emptySet(),
+        clockPadding: Map<BlockPos, Int> = emptyMap(),
         progress: ((completed: Int, total: Int, signal: Signal) -> Unit)? = null,
     ): DelayLog {
         val log = DelayLog()
@@ -32,42 +34,58 @@ internal class PhysicalRouter(
             completed++
             progress?.invoke(completed, total, signal)
         }
-        allRoutes.filter { it.source is Endpoint.Cell }.forEach { route ->
-            route.route(sink, 0, 0, log)
-            complete(route.signal)
-        }
-        rows.flatMap { it.abutments }.forEach { abutment ->
-            abutment.columns.forEach { x ->
-                sink.place(
-                    BlockPos(x, abutment.y, abutment.z),
-                    technology.wire,
-                    technology.routeSupport,
-                    abutment.signal,
-                )
+        val abutments = rows.flatMap { it.abutments }
+        listOf(true, false).forEach { clocks ->
+            fun selected(signal: Signal): Boolean = (signal in clockSignals) == clocks
+            allRoutes.filter { it.source is Endpoint.Cell && selected(it.signal) }.forEach { route ->
+                route.route(sink, 0, 0, log, clockSignals, clockPadding)
+                complete(route.signal)
             }
-            log.pinTicks[BlockPos(abutment.sinkX, abutment.y, abutment.z)] = 0
-            complete(abutment.signal)
-        }
-        runs.forEach { run ->
-            placeGlobalRun(sink, run, log)
-            complete(run.signal)
-        }
-        allRoutes.filter { it.source is Endpoint.Global }.forEach { route ->
-            val source = route.source as Endpoint.Global
-            val key = TapKey(source.track, route.laneY, route.laneZ)
-            route.route(
-                sink,
-                checkNotNull(log.tapDecay[key]) { "missing global decay for signal ${route.signal.index}" },
-                log.tapTicks[key] ?: 0,
-                log,
-            )
-            complete(route.signal)
+            abutments.filter { selected(it.signal) }.forEach { abutment ->
+                abutment.columns.forEach { x ->
+                    sink.place(
+                        BlockPos(x, abutment.y, abutment.z),
+                        technology.wire,
+                        technology.routeSupport,
+                        abutment.signal,
+                    )
+                }
+                log.pinTicks[BlockPos(abutment.sinkX, abutment.y, abutment.z)] = 0
+                complete(abutment.signal)
+            }
+            runs.filter { selected(it.signal) }.forEach { run ->
+                placeGlobalRun(sink, run, log)
+                complete(run.signal)
+            }
+            allRoutes.filter { it.source is Endpoint.Global && selected(it.signal) }.forEach { route ->
+                val source = route.source as Endpoint.Global
+                val key = TapKey(source.track, route.laneY, route.laneZ)
+                route.route(
+                    sink,
+                    checkNotNull(log.tapDecay[key]) { "missing global decay for signal ${route.signal.index}" },
+                    log.tapTicks[key] ?: 0,
+                    log,
+                    clockSignals,
+                    clockPadding,
+                )
+                complete(route.signal)
+            }
         }
         return log
     }
 
-    internal fun measureDelays(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>): Map<BlockPos, Int> =
-        route(rows, globalTracks, RouteSink { _, _, _, _ -> }).pinTicks
+    internal fun measureDelays(
+        rows: List<PlacedRow>,
+        globalTracks: List<GlobalTrack>,
+        clockSignals: Set<Signal> = emptySet(),
+        clockPadding: Map<BlockPos, Int> = emptyMap(),
+    ): Map<BlockPos, Int> = route(
+        rows,
+        globalTracks,
+        RouteSink { _, _, _, _ -> },
+        clockSignals,
+        clockPadding,
+    ).pinTicks
 
     private fun globalRuns(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>): List<GlobalRun> =
         globalTracks.map { track ->
@@ -105,8 +123,22 @@ internal class PhysicalRouter(
             route.viaPolicy,
         ).last().z
 
-    internal fun routingCost(rows: List<PlacedRow>, globalTracks: List<GlobalTrack>): RoutingCost =
-        CountingSink().also { route(rows, globalTracks, it) }.let { RoutingCost(it.repeaters, it.blocks) }
+    internal fun routingCost(
+        rows: List<PlacedRow>,
+        globalTracks: List<GlobalTrack>,
+        clockSignals: Set<Signal> = emptySet(),
+    ): RoutingCost = CountingSink().also { route(rows, globalTracks, it, clockSignals) }
+        .let { RoutingCost(it.repeaters, it.blocks) }
+
+    internal fun routingEvaluation(
+        rows: List<PlacedRow>,
+        globalTracks: List<GlobalTrack>,
+        clockSignals: Set<Signal> = emptySet(),
+    ): Pair<RoutingCost, Map<BlockPos, Int>> {
+        val sink = CountingSink()
+        val delays = route(rows, globalTracks, sink, clockSignals).pinTicks
+        return RoutingCost(sink.repeaters, sink.blocks) to delays
+    }
 
     private fun placeGlobalRun(sink: RouteSink, run: GlobalRun, log: DelayLog) {
         val assigned = run.taps.groupBy { tap ->
@@ -251,7 +283,14 @@ internal class PhysicalRouter(
         }
     }
 
-    private fun LocalRoute.route(sink: RouteSink, inboundDecay: Int, inboundTicks: Int, log: DelayLog) {
+    private fun LocalRoute.route(
+        sink: RouteSink,
+        inboundDecay: Int,
+        inboundTicks: Int,
+        log: DelayLog,
+        clockSignals: Set<Signal>,
+        clockPadding: Map<BlockPos, Int>,
+    ) {
         val sourceX = source.x
         val sinkXs = sinks.map { it.x }
 
@@ -293,8 +332,11 @@ internal class PhysicalRouter(
 
         sinks.forEach { endpoint ->
             val onLane = checkNotNull(atVia[endpoint.x])
-            val toSink = placeSinkEndpoint(sink, endpoint, onLane.decay)
-            val ticks = inboundTicks + fromSource.repeaters + onLane.repeaters + toSink.repeaters
+            val padding = (endpoint as? Endpoint.Cell)?.takeIf { signal in clockSignals }
+                ?.let { clockPadding[it.position] ?: 0 }
+            val toSink = placeSinkEndpoint(sink, endpoint, onLane.decay, padding)
+            val ticks = inboundTicks + fromSource.repeaters + onLane.repeaters + toSink.repeaters +
+                toSink.extraDelayTicks
             when (endpoint) {
                 is Endpoint.Cell -> log.pinTicks[endpoint.position] = ticks
                 is Endpoint.Global -> {
@@ -361,7 +403,12 @@ internal class PhysicalRouter(
         }
     }
 
-    private fun LocalRoute.placeSinkEndpoint(sink: RouteSink, endpoint: Endpoint, laneDecay: Int): Carried =
+    private fun LocalRoute.placeSinkEndpoint(
+        sink: RouteSink,
+        endpoint: Endpoint,
+        laneDecay: Int,
+        clockPadding: Int?,
+    ): Carried =
         when (endpoint) {
             is Endpoint.Cell -> {
                 val descent = endpointViaDescent(endpoint, laneY, ViaFlow.UPWARD, viaPolicy)
@@ -402,6 +449,7 @@ internal class PhysicalRouter(
                     laneDecay + descent,
                     descent,
                     endpoint.requiredStrength,
+                    clockPadding,
                 )
             }
 
@@ -422,7 +470,7 @@ internal class PhysicalRouter(
             }
         }
 
-    private data class Carried(val decay: Int, val repeaters: Int)
+    private data class Carried(val decay: Int, val repeaters: Int, val extraDelayTicks: Int = 0)
 
     internal class DelayLog {
         val pinTicks: MutableMap<BlockPos, Int> = HashMap()
@@ -443,6 +491,7 @@ internal class PhysicalRouter(
         initialDecay: Int,
         viaDecay: Int,
         requiredStrength: Int,
+        clockPadding: Int? = null,
     ): Carried {
         val outsideZ = pin.z + 1
         val descending = travel == Direction.SOUTH
@@ -460,6 +509,15 @@ internal class PhysicalRouter(
         }
         var decayAtVia = initialDecay
         var repeaters = 0
+        val paddingGroups = (clockPadding ?: 0) / 4
+        val paddingRemainder = (clockPadding ?: 0) % 4
+        val forced = if (clockPadding == null) emptyList() else {
+            List(1 + paddingGroups) { outsideZ + it }
+        }
+        val delays = buildMap {
+            forced.take(paddingGroups).forEach { put(it, 4) }
+            forced.lastOrNull()?.let { put(it, 1 + paddingRemainder) }
+        }
         placeZRun(
             sink,
             pin.x,
@@ -467,21 +525,21 @@ internal class PhysicalRouter(
             maxOf(outsideZ, accessZ),
             pin.y,
             travel,
-            emptySet(),
-            signal,
+            forcedRepeaters = forced.toSet(),
+            signal = signal,
             initialDecay = initialDecay,
-
             limit = if (descending) {
                 technology.signalStrength - viaDecay
             } else {
                 technology.signalStrength - requiredStrength
             },
             protectedPositions = setOf(accessZ),
+            repeaterDelays = delays,
         ) { z, decay, repeater ->
             if (z == accessZ) decayAtVia = decay
             if (repeater) repeaters++
         }
-        return Carried(decayAtVia, repeaters)
+        return Carried(decayAtVia, repeaters, paddingGroups * 3 + paddingRemainder)
     }
 
     private fun routeUpperDetour(
@@ -653,6 +711,7 @@ internal class PhysicalRouter(
         limit: Int = technology.signalStrength,
         viaColumns: Set<Int> = emptySet(),
         viaReserve: Int = baseViaDescent,
+        repeaterDelays: Map<Int, Int> = emptyMap(),
         observe: (coordinate: Int, decay: Int, repeater: Boolean) -> Unit = { _, _, _ -> },
     ) {
         require(travel == Direction.EAST || travel == Direction.WEST)
@@ -668,7 +727,7 @@ internal class PhysicalRouter(
         ) { x, repeater, decay ->
             sink.place(
                 BlockPos(x, y, z),
-                if (repeater) technology.repeater(travel) else technology.wire,
+                if (repeater) technology.repeater(travel, repeaterDelays[x] ?: 1) else technology.wire,
                 technology.routeSupport,
                 signal,
             )
@@ -689,6 +748,7 @@ internal class PhysicalRouter(
         limit: Int = technology.signalStrength,
         protectedPositions: Set<Int> = emptySet(),
         viaReserve: Int = baseViaDescent,
+        repeaterDelays: Map<Int, Int> = emptyMap(),
         observe: (coordinate: Int, decay: Int, repeater: Boolean) -> Unit = { _, _, _ -> },
     ) {
         require(travel == Direction.NORTH || travel == Direction.SOUTH)
@@ -704,7 +764,7 @@ internal class PhysicalRouter(
         ) { z, repeater, decay ->
             sink.place(
                 BlockPos(x, y, z),
-                if (repeater) technology.repeater(travel) else technology.wire,
+                if (repeater) technology.repeater(travel, repeaterDelays[z] ?: 1) else technology.wire,
                 technology.routeSupport,
                 signal,
             )

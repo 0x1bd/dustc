@@ -57,6 +57,26 @@
     "description": "One-bit latch; high hold keeps the old value",
     "body": ["latch(${1:data}, ${2:hold})"]
   },
+  "D flip-flop": {
+    "prefix": "dff",
+    "description": "Capture one bit on the rising clock edge",
+    "body": ["dff(${1:data}, ${2:clock})"]
+  },
+  "Register": {
+    "prefix": "register",
+    "description": "Capture a bus on the rising clock edge",
+    "body": ["register(${1:data}, ${2:clock})"]
+  },
+  "Enabled register": {
+    "prefix": "enabled_register",
+    "description": "Capture a bus when enable is high",
+    "body": ["enabled_register(${1:data}, ${2:enable}, ${3:clock})"]
+  },
+  "Resettable register": {
+    "prefix": "resettable_register",
+    "description": "Synchronously reset or capture a bus",
+    "body": ["resettable_register(${1:data}, ${2:reset}, ${3:clock})"]
+  },
   "Placement tier": {
     "prefix": "tier",
     "description": "Place a signal on a physical tier",

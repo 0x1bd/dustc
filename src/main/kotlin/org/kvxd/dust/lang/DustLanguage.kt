@@ -28,7 +28,7 @@ object DustLanguage {
             throw DustCompileException(reporter.render().trimEnd())
         }
         if (userModules.isEmpty()) return emptyList()
-        val libraryModules = dustStandardLibrarySources.flatMap { librarySource ->
+        val libraryModules = BundledDustModules.sources.flatMap { librarySource ->
             Parser(reporter, librarySource).parse()
         }
         if (reporter.hasErrors) throw DustCompileException(reporter.render().trimEnd())
