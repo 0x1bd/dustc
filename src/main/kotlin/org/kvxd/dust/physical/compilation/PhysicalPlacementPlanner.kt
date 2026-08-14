@@ -156,12 +156,12 @@ internal class PhysicalPlacementPlanner(
 
     private fun compareFloorplans(): Comparator<Floorplan> = compareBy<Floorplan> { it.timingViolationCount }
         .thenBy { it.timingDeficitTicks }
-        .thenBy { it.clockSkewTicks }
         .thenBy { it.selectionCost }
         .thenBy { it.routingBlocks }
         .thenBy { it.maximumDimension }
         .thenBy { it.area }
         .thenBy { it.routingRepeaters }
+        .thenBy { it.clockSkewTicks }
         .thenBy { it.timingCutCost }
         .thenBy { it.tierCount }
 

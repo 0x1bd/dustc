@@ -2,16 +2,13 @@ cell input-pad
 
 palette:
 # = support
-+ = dust
 L = lever-floor
 
 pins:
-y output @0,1,1
+y output @0,1,0
 
 layers:
 @0
 #
-#
 @1
 L
-+

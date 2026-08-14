@@ -536,13 +536,14 @@ internal class PhysicalFloorplanner(
         return connections
     }
 
-
     private fun ConnectedPin.globalSinkKey(): GlobalSinkKey = GlobalSinkKey(cell.name, pin.name)
 
     private fun ConnectedPin.cellEndpoint(): Endpoint.Cell = Endpoint.Cell(
         position,
         pin.allowsHorizontalAbutment,
         if (pin.accessesFromSouth) ViaSense.UP else ViaSense.DOWN,
+        ((cell.cell.logicalType.behavior as? CellBehavior.Stateful)?.trigger
+            as? CellBehavior.Trigger.EdgeTriggered)?.clockPort == pin.port,
         pin.driveStrength,
         pin.requiredStrength,
     )

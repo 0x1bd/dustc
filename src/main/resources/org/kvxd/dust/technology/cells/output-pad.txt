@@ -1,17 +1,11 @@
 cell output-pad
 
 palette:
-# = support
-N = repeater-north
 O = lamp
 
 pins:
-a input @0,3,1 abut=false south=true
+a input @0,3,0 abut=false south=true
 
 layers:
-@2
-..
-#.
 @3
 O.
-N.

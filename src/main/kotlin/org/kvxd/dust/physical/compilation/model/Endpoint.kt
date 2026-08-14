@@ -9,6 +9,7 @@ internal sealed interface Endpoint {
         val position: BlockPos,
         val allowsHorizontalAbutment: Boolean,
         val sense: ViaSense,
+        val clockSink: Boolean,
         val driveStrength: Int,
         val requiredStrength: Int,
     ) : Endpoint {

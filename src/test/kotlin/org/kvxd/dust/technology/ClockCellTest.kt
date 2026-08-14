@@ -120,6 +120,13 @@ class ClockCellTest {
         val clockPin = placedDff.pin("clock")
         assertEquals(BlockType.REPEATER, design.matrix[clockPin.x, clockPin.y, clockPin.z + 1].type)
         assertTrue(design.matrix[clockPin.x, clockPin.y, clockPin.z + 2].type != BlockType.REPEATER)
+        design.cells.filter { it.cell.name == "output-pad" }.forEach { output ->
+            val pin = output.pin("a")
+            assertTrue(
+                design.matrix[pin.x, pin.y, pin.z + 1].type != BlockType.REPEATER,
+                "output ${output.name} has an unnecessary repeater before its lamp",
+            )
+        }
         val clockPosition = placedClock.observations.getValue("clock")
         val simulator = GateLevelSimulator(design.matrix)
         simulator.settle(design.matrix.blockCount())

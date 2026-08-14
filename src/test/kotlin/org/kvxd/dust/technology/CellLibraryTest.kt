@@ -99,6 +99,18 @@ class CellLibraryTest {
     }
 
     @Test
+    fun `debug pads use their controls and lamps as routing pins`() {
+        val input = technology.debugInputPad
+        assertEquals(CellSize(1, 2, 1), input.size)
+        assertEquals(BlockType.LEVER, input.blocks.toMap().getValue(input.pin("y").position).type)
+
+        val output = technology.debugOutputPad
+        assertEquals(CellSize(2, 4, 1), output.size)
+        assertEquals(BlockType.REDSTONE_LAMP, output.blocks.toMap().getValue(output.pin("a").position).type)
+        assertTrue(output.blocks.none { (_, state) -> state.type == BlockType.REPEATER })
+    }
+
+    @Test
     fun `wall torches are mounted to solid blocks`() {
         Primitive.entries.map(::cell).forEach { cell ->
             val blocks = cell.blocks.toMap()

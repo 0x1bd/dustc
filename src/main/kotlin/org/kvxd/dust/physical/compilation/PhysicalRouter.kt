@@ -332,7 +332,7 @@ internal class PhysicalRouter(
 
         sinks.forEach { endpoint ->
             val onLane = checkNotNull(atVia[endpoint.x])
-            val padding = (endpoint as? Endpoint.Cell)?.takeIf { signal in clockSignals }
+            val padding = (endpoint as? Endpoint.Cell)?.takeIf { it.clockSink && signal in clockSignals }
                 ?.let { clockPadding[it.position] ?: 0 }
             val toSink = placeSinkEndpoint(sink, endpoint, onLane.decay, padding)
             val ticks = inboundTicks + fromSource.repeaters + onLane.repeaters + toSink.repeaters +
@@ -790,7 +790,7 @@ internal class PhysicalRouter(
             val nextStartsVia = (coordinate + stride) in viaColumns
             val repeater = !startsVia && (
                     coordinate in forcedRepeaters ||
-                            decay + 1 >= limit ||
+                            decay + 1 > limit ||
                             (nextStartsVia && decay + 2 + viaReserve >= technology.signalStrength)
                     )
             step(coordinate, repeater, decay)

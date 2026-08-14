@@ -19,8 +19,7 @@ internal data class Floorplan(
 ) {
     val area: Long = width.toLong() * length
     val maximumDimension: Int = maxOf(width, length)
-    val selectionCost: Long = clockSkewTicks.toLong() * CLOCK_SKEW_SELECTION_WEIGHT +
-        routingBlocks * ROUTING_SELECTION_WEIGHT +
+    val selectionCost: Long = routingBlocks * ROUTING_SELECTION_WEIGHT +
         maximumDimension.toLong() * MAX_DIMENSION_SELECTION_WEIGHT + area * AREA_SELECTION_WEIGHT
     val timingViolationCount: Int = timing?.let {
         it.setupViolations.size + it.holdViolations.size + it.clockSkewViolations.size
