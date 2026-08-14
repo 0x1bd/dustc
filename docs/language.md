@@ -362,6 +362,68 @@ value remain errors. A source module may not reuse the name of a bundled library
 Placement attributes attached to a module's top-level I/O apply when that module itself is compiled as the top level.
 They are not propagated through a nested module call.
 
+## Bundled arithmetic library
+
+Dust bundles generic combinational arithmetic as parameterized Dust modules. They are parsed, specialized, and flattened
+through the same path as source modules. `WIDTH` may span the normal
+1-to-64-bit bus range, including the widened error buses used by coordinate algorithms.
+
+| Module                                                       | Inputs                | Outputs                                          |
+|--------------------------------------------------------------|-----------------------|--------------------------------------------------|
+| `ripple_add<WIDTH>`                                          | `a`, `b`, `carry_in`  | `sum`, `carry_out`                               |
+| `subtract<WIDTH>`                                            | `a`, `b`, `borrow_in` | `difference`, `borrow_out`                       |
+| `negate<WIDTH>`                                              | `value`               | `result`                                         |
+| `increment<WIDTH>`                                           | `value`               | `result`, `carry_out`                            |
+| `decrement<WIDTH>`                                           | `value`               | `result`, `borrow_out`                           |
+| `compare_unsigned<WIDTH>`                                    | `a`, `b`              | `equal`, `not_equal`, `less`, `greater`          |
+| `compare_signed<WIDTH>`                                      | `a`, `b`              | `equal`, `not_equal`, `less`, `greater`          |
+| `equal<WIDTH>` / `not_equal<WIDTH>`                          | `a`, `b`              | `y`                                              |
+| `unsigned_less_than<WIDTH>` / `unsigned_greater_than<WIDTH>` | `a`, `b`              | `y`                                              |
+| `signed_less_than<WIDTH>` / `signed_greater_than<WIDTH>`     | `a`, `b`              | `y`                                              |
+| `absolute_difference<WIDTH>`                                 | `a`, `b`              | `difference`                                     |
+| `alu<WIDTH = 4>`                                             | `a`, `b`, `operation` | `value`, `zero`, `negative`, `carry`, `overflow` |
+
+Addition and subtraction are modulo `2^WIDTH`, with overflow reported separately as carry or borrow. Signed comparison
+uses two's-complement interpretation.
+
+Conventional short wrappers are also provided: `add`, `sub`, `neg`, `inc`, `dec`, `eq`, `neq`, `ult`, `ugt`, `slt`,
+`sgt`, and `abs_diff`. For example:
+
+```dust
+let advanced = add<WIDTH>(position, velocity, false)
+let ordered = slt<WIDTH>(advanced.sum, limit)
+next = if ordered.y { advanced.sum } else { limit }
+```
+
+Bundled module names are reserved. Declaring a source module with one of these names is diagnosed as ambiguous.
+
+### Small ALU
+
+`alu` is a ready-to-use combinational ALU. Its width defaults to 4 bits.
+
+```dust
+let calculated = alu(a, b, operation)
+value = calculated.value
+zero = calculated.zero
+```
+
+Use `alu<8>(a, b, operation)` (or another width) when needed. The three-bit `operation` input selects:
+
+| `operation` | Result                                   |
+|-------------|------------------------------------------|
+| `0b000`     | `a + b`                                  |
+| `0b001`     | `a - b`                                  |
+| `0b010`     | `a & b`                                  |
+| `0b011`     | `a \| b`                                 |
+| `0b100`     | `a ^ b`                                  |
+| `0b101`     | `~a`                                     |
+| `0b110`     | `1` when `a == b`, otherwise `0`         |
+| `0b111`     | `1` when unsigned `a < b`, otherwise `0` |
+
+`zero` and `negative` always describe `value`. `carry` is the addition carry. For subtraction it is one when no borrow
+occurred. `overflow` reports signed two's-complement overflow for addition and subtraction. `carry` and `overflow` are
+zero for logic and comparison operations.
+
 ## Physical placement attributes
 
 Dust normally chooses placement automatically. Attributes let a design provide useful physical constraints or hints

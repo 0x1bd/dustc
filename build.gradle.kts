@@ -67,8 +67,64 @@ val generateBuildInfo = tasks.register("generateBuildInfo") {
     }
 }
 
+val generateDustStandardLibrary = tasks.register("generateDustStandardLibrary") {
+    description = "Embeds Dust standard-library sources in generated Kotlin."
+    val sourceDirectory = layout.projectDirectory.dir("src/main/dust")
+    val sourceFiles = fileTree(sourceDirectory) { include("**/*.dust") }
+    val outputDirectory = layout.buildDirectory.dir("generated/dustStandardLibrary/kotlin")
+    inputs.files(sourceFiles).withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.dir(outputDirectory)
+
+    doLast {
+        fun kotlinString(value: String): String = buildString(value.length + 2) {
+            append('"')
+            value.forEach { character ->
+                when (character) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '$' -> append("\\$")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> if (character.code < 0x20) {
+                        append("\\u")
+                        append(character.code.toString(16).padStart(4, '0'))
+                    } else {
+                        append(character)
+                    }
+                }
+            }
+            append('"')
+        }
+
+        val root = sourceDirectory.asFile
+        val sources = sourceFiles.files.filter { it.isFile }.sortedBy { it.relativeTo(root).invariantSeparatorsPath }
+        val target = outputDirectory.get().file("org/kvxd/dust/lang/DustStandardLibrarySources.kt").asFile
+        target.parentFile.mkdirs()
+        target.writeText(
+            buildString {
+                appendLine("package org.kvxd.dust.lang")
+                appendLine()
+                appendLine("import org.kvxd.dust.lang.lexing.SourceFile")
+                appendLine()
+                appendLine("internal val dustStandardLibrarySources: List<SourceFile> = listOf(")
+                sources.forEach { source ->
+                    val relativePath = source.relativeTo(root).invariantSeparatorsPath
+                    append("    SourceFile(")
+                    append(kotlinString("<stdlib>/$relativePath"))
+                    append(", ")
+                    append(kotlinString(source.readText()))
+                    appendLine("),")
+                }
+                appendLine(")")
+            },
+        )
+    }
+}
+
 kotlin.sourceSets.named("main") {
     kotlin.srcDir(generateBuildInfo)
+    kotlin.srcDir(generateDustStandardLibrary)
 }
 
 val extensionManifest = layout.projectDirectory.file("editors/vscode/package.json")

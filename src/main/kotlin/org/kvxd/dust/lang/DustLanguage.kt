@@ -19,19 +19,29 @@ object DustLanguage {
     ): List<Circuit> {
         val file = SourceFile(sourceName, source)
         val reporter = DiagnosticReporter(color)
-        val modules = Parser(reporter, file).parse()
+        val userModules = Parser(reporter, file).parse()
         if (reporter.hasErrors) throw DustCompileException(reporter.render().trimEnd())
 
-        val duplicate = modules.groupBy { it.name }.values.firstOrNull { it.size > 1 }
+        val duplicate = userModules.groupBy { it.name }.values.firstOrNull { it.size > 1 }
         if (duplicate != null) {
             reporter.error("duplicate module '${duplicate.first().name}'", duplicate.last().location)
             throw DustCompileException(reporter.render().trimEnd())
         }
-        if (modules.isEmpty()) return emptyList()
+        if (userModules.isEmpty()) return emptyList()
+        val libraryModules = dustStandardLibrarySources.flatMap { librarySource ->
+            Parser(reporter, librarySource).parse()
+        }
+        if (reporter.hasErrors) throw DustCompileException(reporter.render().trimEnd())
+        val libraryNames = libraryModules.mapTo(hashSetOf()) { it.name }
+        userModules.firstOrNull { it.name in libraryNames }?.let { ambiguous ->
+            reporter.error("module '${ambiguous.name}' is ambiguous with a bundled Dust library module", ambiguous.location)
+            throw DustCompileException(reporter.render().trimEnd())
+        }
+        val modules = userModules + libraryModules
 
         val selected = when {
             moduleName != null -> {
-                val selectedModule = modules.singleOrNull { it.name == moduleName }
+                val selectedModule = userModules.singleOrNull { it.name == moduleName }
                 if (selectedModule == null) {
                     reporter.error("no module named '$moduleName'", modules.first().location)
                     throw DustCompileException(reporter.render().trimEnd())
@@ -39,14 +49,14 @@ object DustLanguage {
                 listOf(selectedModule)
             }
 
-            parameters.isNotEmpty() && modules.size != 1 -> {
-                reporter.error("select one top-level module when supplying parameters", modules.first().location)
+            parameters.isNotEmpty() && userModules.size != 1 -> {
+                reporter.error("select one top-level module when supplying parameters", userModules.first().location)
                 throw DustCompileException(reporter.render().trimEnd())
             }
 
             else -> {
-                val concrete = modules.filter { module -> module.parameters.all { it.default != null } }
-                if (concrete.isEmpty() && modules.isNotEmpty()) modules.take(1) else concrete
+                val concrete = userModules.filter { module -> module.parameters.all { it.default != null } }
+                if (concrete.isEmpty()) userModules.take(1) else concrete
             }
         }
         val circuits = arrayListOf<Circuit>()

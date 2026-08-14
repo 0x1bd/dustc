@@ -1,0 +1,295 @@
+module ripple_add<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    input carry_in: bit,
+    output sum: bits<WIDTH>,
+    output carry_out: bit,
+) {
+    let mut carry = carry_in
+    for i in 0..WIDTH {
+        let partial = a[i] ^ b[i]
+        sum[i] = partial ^ carry
+        carry = (a[i] & b[i]) | (partial & carry)
+    }
+    carry_out = carry
+}
+
+module subtract<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    input borrow_in: bit,
+    output difference: bits<WIDTH>,
+    output borrow_out: bit,
+) {
+    let mut borrow = borrow_in
+    for i in 0..WIDTH {
+        let partial = a[i] ^ b[i]
+        difference[i] = partial ^ borrow
+        borrow = ((~a[i]) & b[i]) | ((~partial) & borrow)
+    }
+    borrow_out = borrow
+}
+
+module negate<const WIDTH: int>(
+    input value: bits<WIDTH>,
+    output result: bits<WIDTH>,
+) {
+    let negated = ripple_add<WIDTH>(~value, const_bits<WIDTH>(0), true)
+    result = negated.sum
+}
+
+module increment<const WIDTH: int>(
+    input value: bits<WIDTH>,
+    output result: bits<WIDTH>,
+    output carry_out: bit,
+) {
+    let incremented = ripple_add<WIDTH>(value, const_bits<WIDTH>(0), true)
+    result = incremented.sum
+    carry_out = incremented.carry_out
+}
+
+module decrement<const WIDTH: int>(
+    input value: bits<WIDTH>,
+    output result: bits<WIDTH>,
+    output borrow_out: bit,
+) {
+    let decremented = subtract<WIDTH>(value, const_bits<WIDTH>(0), true)
+    result = decremented.difference
+    borrow_out = decremented.borrow_out
+}
+
+module compare_unsigned<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output equal: bit,
+    output not_equal: bit,
+    output less: bit,
+    output greater: bit,
+) {
+    let mut same = true
+    let mut below = false
+    let mut above = false
+    for i in 0..WIDTH {
+        let different = a[i] ^ b[i]
+        below = ((~a[i]) & b[i]) | ((~different) & below)
+        above = (a[i] & (~b[i])) | ((~different) & above)
+        same = same & (~different)
+    }
+    equal = same
+    not_equal = ~same
+    less = below
+    greater = above
+}
+
+module equal<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output y: bit,
+) {
+    let compared = compare_unsigned<WIDTH>(a, b)
+    y = compared.equal
+}
+
+module not_equal<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output y: bit,
+) {
+    let compared = compare_unsigned<WIDTH>(a, b)
+    y = compared.not_equal
+}
+
+module unsigned_less_than<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output y: bit,
+) {
+    let compared = compare_unsigned<WIDTH>(a, b)
+    y = compared.less
+}
+
+module unsigned_greater_than<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output y: bit,
+) {
+    let compared = compare_unsigned<WIDTH>(a, b)
+    y = compared.greater
+}
+
+module compare_signed<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output equal: bit,
+    output not_equal: bit,
+    output less: bit,
+    output greater: bit,
+) {
+    let unsigned = compare_unsigned<WIDTH>(a, b)
+    let sign_different = a[WIDTH - 1] ^ b[WIDTH - 1]
+    equal = unsigned.equal
+    not_equal = unsigned.not_equal
+    less = if sign_different { a[WIDTH - 1] } else { unsigned.less }
+    greater = if sign_different { b[WIDTH - 1] } else { unsigned.greater }
+}
+
+module signed_less_than<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output y: bit,
+) {
+    let compared = compare_signed<WIDTH>(a, b)
+    y = compared.less
+}
+
+module signed_greater_than<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output y: bit,
+) {
+    let compared = compare_signed<WIDTH>(a, b)
+    y = compared.greater
+}
+
+module absolute_difference<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output difference: bits<WIDTH>,
+) {
+    let compared = compare_unsigned<WIDTH>(a, b)
+    let a_minus_b = subtract<WIDTH>(a, b, false)
+    let b_minus_a = subtract<WIDTH>(b, a, false)
+    difference = if compared.less { b_minus_a.difference } else { a_minus_b.difference }
+}
+
+module alu<const WIDTH: int = 4>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    input operation: bits<3>,
+    output value: bits<WIDTH>,
+    output zero: bit,
+    output negative: bit,
+    output carry: bit,
+    output overflow: bit,
+) {
+    let mut arithmetic_b = b
+    for i in 0..WIDTH { arithmetic_b[i] = b[i] ^ operation[0] }
+    let calculated = ripple_add<WIDTH>(a, arithmetic_b, operation[0])
+
+    let mut same = true
+    let mut below = false
+    for i in 0..WIDTH {
+        let different = a[i] ^ b[i]
+        below = ((~a[i]) & b[i]) | ((~different) & below)
+        same = same & (~different)
+    }
+
+    let simple_logic = if operation[0] { a | b } else { a & b }
+    let low_group = if operation[1] { simple_logic } else { calculated.sum }
+
+    let unary_logic = if operation[0] { ~a } else { a ^ b }
+    let mut comparison = const_bits<WIDTH>(0)
+    comparison[0] = if operation[0] { below } else { same }
+    let high_group = if operation[1] { comparison } else { unary_logic }
+
+    let selected = if operation[2] { high_group } else { low_group }
+    let mut is_zero = true
+    for i in 0..WIDTH { is_zero = is_zero & (~selected[i]) }
+    let arithmetic_selected = (~operation[2]) & (~operation[1])
+    let add_overflow = (~(a[WIDTH - 1] ^ b[WIDTH - 1])) & (a[WIDTH - 1] ^ calculated.sum[WIDTH - 1])
+    let sub_overflow = (a[WIDTH - 1] ^ b[WIDTH - 1]) & (a[WIDTH - 1] ^ calculated.sum[WIDTH - 1])
+
+    value = selected
+    zero = is_zero
+    negative = selected[WIDTH - 1]
+    carry = arithmetic_selected & calculated.carry_out
+    overflow = arithmetic_selected & if operation[0] { sub_overflow } else { add_overflow }
+}
+
+module add<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    input carry_in: bit,
+    output sum: bits<WIDTH>,
+    output carry_out: bit,
+) {
+    let value = ripple_add<WIDTH>(a, b, carry_in)
+    sum = value.sum
+    carry_out = value.carry_out
+}
+
+module sub<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    input borrow_in: bit,
+    output difference: bits<WIDTH>,
+    output borrow_out: bit,
+) {
+    let value = subtract<WIDTH>(a, b, borrow_in)
+    difference = value.difference
+    borrow_out = value.borrow_out
+}
+
+module neg<const WIDTH: int>(input value: bits<WIDTH>, output result: bits<WIDTH>) {
+    let calculated = negate<WIDTH>(value)
+    result = calculated.result
+}
+
+module inc<const WIDTH: int>(
+    input value: bits<WIDTH>,
+    output result: bits<WIDTH>,
+    output carry_out: bit,
+) {
+    let calculated = increment<WIDTH>(value)
+    result = calculated.result
+    carry_out = calculated.carry_out
+}
+
+module dec<const WIDTH: int>(
+    input value: bits<WIDTH>,
+    output result: bits<WIDTH>,
+    output borrow_out: bit,
+) {
+    let calculated = decrement<WIDTH>(value)
+    result = calculated.result
+    borrow_out = calculated.borrow_out
+}
+
+module eq<const WIDTH: int>(input a: bits<WIDTH>, input b: bits<WIDTH>, output y: bit) {
+    let compared = equal<WIDTH>(a, b)
+    y = compared.y
+}
+
+module neq<const WIDTH: int>(input a: bits<WIDTH>, input b: bits<WIDTH>, output y: bit) {
+    let compared = not_equal<WIDTH>(a, b)
+    y = compared.y
+}
+
+module ult<const WIDTH: int>(input a: bits<WIDTH>, input b: bits<WIDTH>, output y: bit) {
+    let compared = unsigned_less_than<WIDTH>(a, b)
+    y = compared.y
+}
+
+module ugt<const WIDTH: int>(input a: bits<WIDTH>, input b: bits<WIDTH>, output y: bit) {
+    let compared = unsigned_greater_than<WIDTH>(a, b)
+    y = compared.y
+}
+
+module slt<const WIDTH: int>(input a: bits<WIDTH>, input b: bits<WIDTH>, output y: bit) {
+    let compared = signed_less_than<WIDTH>(a, b)
+    y = compared.y
+}
+
+module sgt<const WIDTH: int>(input a: bits<WIDTH>, input b: bits<WIDTH>, output y: bit) {
+    let compared = signed_greater_than<WIDTH>(a, b)
+    y = compared.y
+}
+
+module abs_diff<const WIDTH: int>(
+    input a: bits<WIDTH>,
+    input b: bits<WIDTH>,
+    output difference: bits<WIDTH>,
+) {
+    let calculated = absolute_difference<WIDTH>(a, b)
+    difference = calculated.difference
+}

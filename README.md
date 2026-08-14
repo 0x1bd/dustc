@@ -95,6 +95,12 @@ Compile the included 4-bit adder:
 dustc build examples/adder4.dust -o adder4.schem
 ```
 
+A ready-to-use 4-bit ALU is included too:
+
+```shell
+dustc build examples/alu4.dust -o alu4.schem
+```
+
 By default, physical builds expose inputs as levers and outputs as lamps. For raw redstone terminals instead:
 
 ```shell
@@ -187,7 +193,9 @@ module inverter(
 }
 ```
 
-Dust supports buses, Boolean operators, compile-time loops, local bindings, module composition, multiplexers, latches, and physical placement attributes such as `#[near(...)]`, `#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
+Dust supports buses, Boolean operators, compile-time loops and parameters, local bindings, module composition, a bundled
+generic arithmetic/comparison library, multiplexers, latches, and physical placement attributes such as `#[near(...)]`,
+`#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
 
 See the [language reference](docs/language.md) for the complete syntax and semantics.
 The physical-cell format is documented in [text cell definitions](docs/cell-definitions.md).
