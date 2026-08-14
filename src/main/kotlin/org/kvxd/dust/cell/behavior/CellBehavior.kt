@@ -13,6 +13,13 @@ sealed interface CellBehavior {
                 require(clockPort.isNotBlank())
             }
         }
+
+        data class GeneratedClock(val enablePort: String, val periodTicks: Int) : Trigger {
+            init {
+                require(enablePort.isNotBlank())
+                require(periodTicks > 0)
+            }
+        }
     }
 
     fun evaluate(

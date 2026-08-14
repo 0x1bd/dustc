@@ -1,0 +1,10 @@
+module main<const CLOCK_TICKS: int = 10>(
+    input enabled: bit,
+    input data: bit,
+    output pulse: bit,
+    output stored: bit,
+) {
+    let system_clock = clock<CLOCK_TICKS>(enabled)
+    pulse = system_clock
+    stored = dff(data, system_clock)
+}

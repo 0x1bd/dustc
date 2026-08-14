@@ -362,12 +362,23 @@ continuously exposes the stored value, so reading needs no separate action. Chan
 changes while `write` is 0, do not overwrite it. To write another value, return `clock` to 0, set up the new value with
 `write` at 1, and change `clock` to 1 again.
 
+### Generated clock
+
+`clock<CLOCK_TICKS>(enabled)` creates a repeating physical clock signal. `CLOCK_TICKS` is the complete period: the
+number of redstone ticks from one 0-to-1 clock change to the next. When `enabled` is 0, the clock stops and remains 0.
+
+```dust
+let system_clock = clock<10>(enabled)
+stored = register(data, system_clock)
+```
+
+The subtraction-mode comparator loop can represent periods `6 + 4n`: 6, 10, 14, 18, and so on, up to 4094 ticks.
+Other values are rejected during Dust compilation. The physical generator uses two matched repeater lanes. The two
+repeaters in each row always have the same delay.
+
 Physical compilation reports `minimumSafeStepTicks`/`minimumClockPeriodTicks`, hold slack, and maximum clock skew.
 Supplying an explicit clock period through the compiler API makes setup, hold, or skew violations reject the build.
 Externally stepped builds always reject hold violations and report their minimum safe interval.
-
-The generic externally stepped Bresenham controller in `examples/bresenham.dust` demonstrates a larger packed-state
-machine built with `let rec`. All line-drawing behavior is ordinary Dust module logic rather than a compiler intrinsic.
 
 ## Calling modules
 

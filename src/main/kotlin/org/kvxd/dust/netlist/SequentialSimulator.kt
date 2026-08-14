@@ -15,6 +15,9 @@ class SequentialSimulator(private val netlist: BooleanNetlist) {
     private val edgeTriggered = cellState.keys.filter { instance ->
         (instance.type.behavior as CellBehavior.Stateful).trigger is CellBehavior.Trigger.EdgeTriggered
     }
+    private val generatedClocks = cellState.keys.filter { instance ->
+        (instance.type.behavior as CellBehavior.Stateful).trigger is CellBehavior.Trigger.GeneratedClock
+    }
     private val transparent = cellState.keys.filter { instance ->
         (instance.type.behavior as CellBehavior.Stateful).trigger == CellBehavior.Trigger.Transparent
     }
@@ -24,6 +27,8 @@ class SequentialSimulator(private val netlist: BooleanNetlist) {
         require(values.keys == netlist.inputs.keys) { "expected inputs ${netlist.inputs.keys}, got ${values.keys}" }
         netlist.inputs.forEach { (name, signal) -> state[signal.index] = checkNotNull(values[name]) }
 
+        evaluateCombinational()
+        generatedClocks.forEach { instance -> evaluateState(instance, cellState.getValue(instance)) }
         evaluateCombinational()
         val clockLevels = edgeTriggered.associateWith(::clockLevel)
         val sampled = edgeTriggered.mapNotNull { instance ->

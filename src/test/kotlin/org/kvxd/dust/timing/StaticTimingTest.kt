@@ -2,6 +2,7 @@ package org.kvxd.dust.timing
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.kvxd.dust.compile
 import org.kvxd.dust.lang.DustLanguage
@@ -46,6 +47,18 @@ class StaticTimingTest {
         assertTrue(violated.clockSkewViolations.isNotEmpty())
     }
 
+    @Test
+    fun `generated clock period constrains its register paths`() {
+        val compiled = generatedClockPipeline(50).compile()
+
+        assertEquals(50, compiled.timing.generatedClockPeriodTicks)
+        assertTrue(compiled.timing.isClean)
+
+        val error = assertFailsWith<IllegalArgumentException> { generatedClockPipeline(6).compile() }
+        assertTrue("clock period 6" in error.message.orEmpty())
+        assertTrue("setup" in error.message.orEmpty())
+    }
+
     private fun pipeline() = DustLanguage.compile(
         """
         module pipeline(
@@ -59,4 +72,20 @@ class StaticTimingTest {
         """.trimIndent(),
         "pipeline.dust",
     ).single().compile().physical
+
+    private fun generatedClockPipeline(period: Int) = DustLanguage.compile(
+        """
+        module main(
+            input enabled: bit,
+            input d: bit,
+            output q: bit,
+        ) {
+            let system_clock = clock<$period>(enabled)
+            let first = dff(d, system_clock)
+            let delayed = ~~~~~~~~~~~~first
+            q = dff(delayed, system_clock)
+        }
+        """.trimIndent(),
+        "generated-clock-$period.dust",
+    ).single()
 }

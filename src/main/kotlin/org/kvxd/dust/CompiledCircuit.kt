@@ -72,8 +72,9 @@ fun Circuit.compile(
                 "worst slack is ${timing.worstHoldSlackTicks} tick(s)"
         }
     } else {
+        val effectiveClockPeriod = clockPeriodTicks ?: timing.generatedClockPeriodTicks
         require(timing.isClean) {
-            "clock period $clockPeriodTicks has ${timing.setupViolations.size} setup, " +
+            "clock period $effectiveClockPeriod has ${timing.setupViolations.size} setup, " +
                 "${timing.holdViolations.size} hold, and ${timing.clockSkewViolations.size} skew violation(s)"
         }
     }

@@ -530,6 +530,8 @@ internal class PhysicalRouter(
             initialDecay = initialDecay,
             limit = if (descending) {
                 technology.signalStrength - viaDecay
+            } else if (clockPadding != null) {
+                technology.signalStrength
             } else {
                 technology.signalStrength - requiredStrength
             },

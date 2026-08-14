@@ -15,11 +15,22 @@ class CellType(
         require(ports.map { it.name }.distinct().size == ports.size) { "$id has duplicate ports" }
         val byName = ports.associateBy { it.name }
         (behavior as? CellBehavior.Stateful)?.trigger?.let { trigger ->
-            if (trigger is CellBehavior.Trigger.EdgeTriggered) {
-                requireInputPort(byName, trigger.clockPort, id)
-                require(byName.getValue(trigger.clockPort).width == 1) {
-                    "$id clock port '${trigger.clockPort}' must be one bit"
+            when (trigger) {
+                is CellBehavior.Trigger.EdgeTriggered -> {
+                    requireInputPort(byName, trigger.clockPort, id)
+                    require(byName.getValue(trigger.clockPort).width == 1) {
+                        "$id clock port '${trigger.clockPort}' must be one bit"
+                    }
                 }
+
+                is CellBehavior.Trigger.GeneratedClock -> {
+                    requireInputPort(byName, trigger.enablePort, id)
+                    require(byName.getValue(trigger.enablePort).width == 1) {
+                        "$id clock enable port '${trigger.enablePort}' must be one bit"
+                    }
+                }
+
+                CellBehavior.Trigger.Transparent -> Unit
             }
         }
         timing.arcs.forEach { arc ->

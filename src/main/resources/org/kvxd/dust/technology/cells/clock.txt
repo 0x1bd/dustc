@@ -1,0 +1,27 @@
+cell clock<CLOCK_TICKS: int in 1..4094>
+
+palette:
+# = support
+
+pins:
+enabled input @0,1,((CLOCK_TICKS + 13) / 16 + 2) abut=false required=15
+clock output @2,1,((CLOCK_TICKS + 13) / 16 + 2) drive=13
+
+observations:
+clock @2,1,((CLOCK_TICKS + 13) / 16 + 2)
+
+layout:
+wire dust @0,1,((CLOCK_TICKS + 13) / 16 + 2)
+wire comparator-north-subtract @0,1,((CLOCK_TICKS + 13) / 16 + 1)
+wire dust @1,1,((CLOCK_TICKS + 13) / 16 + 1)
+wire dust @2,1,((CLOCK_TICKS + 13) / 16 + 1)
+wire dust @2,1,((CLOCK_TICKS + 13) / 16 + 2)
+for lane in 0..((CLOCK_TICKS + 13) / 16) {
+    wire repeater-north-${min(4, (CLOCK_TICKS - 2) / 4 - lane * 4)} @0,1,(lane + 1)
+    wire repeater-south-${min(4, (CLOCK_TICKS - 2) / 4 - lane * 4)} @1,1,(lane + 1)
+}
+block # @0,1,0
+wire dust @1,1,0
+
+timing:
+clock-period ticks=CLOCK_TICKS

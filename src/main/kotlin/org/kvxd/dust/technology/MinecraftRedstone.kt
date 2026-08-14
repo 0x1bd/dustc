@@ -7,6 +7,7 @@ import org.kvxd.dust.device.geometry.Direction
 import org.kvxd.dust.cell.library.BuiltinCells
 import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.cell.library.CellProvider
+import org.kvxd.dust.cell.library.ClockCell
 import org.kvxd.dust.technology.definition.CellDefinitionLoader
 
 object MinecraftRedstone {
@@ -37,7 +38,19 @@ object MinecraftRedstone {
             "repeater-east" to RedstoneBlocks.repeater(Direction.EAST),
             "repeater-north" to RedstoneBlocks.repeater(Direction.NORTH),
             "repeater-south" to RedstoneBlocks.repeater(Direction.SOUTH),
+            "repeater-north-1" to RedstoneBlocks.repeater(Direction.NORTH),
+            "repeater-south-1" to RedstoneBlocks.repeater(Direction.SOUTH),
             "repeater-east-2" to RedstoneBlocks.repeater(Direction.EAST, delay = 2),
+            "repeater-north-2" to RedstoneBlocks.repeater(Direction.NORTH, delay = 2),
+            "repeater-north-3" to RedstoneBlocks.repeater(Direction.NORTH, delay = 3),
+            "repeater-north-4" to RedstoneBlocks.repeater(Direction.NORTH, delay = 4),
+            "repeater-south-2" to RedstoneBlocks.repeater(Direction.SOUTH, delay = 2),
+            "repeater-south-3" to RedstoneBlocks.repeater(Direction.SOUTH, delay = 3),
+            "repeater-south-4" to RedstoneBlocks.repeater(Direction.SOUTH, delay = 4),
+            "comparator-north-subtract" to RedstoneBlocks.comparator(
+                Direction.NORTH,
+                org.kvxd.dust.device.redstone.ComparatorMode.SUBTRACT,
+            ),
             "comparator-east-subtract" to RedstoneBlocks.comparator(
                 Direction.EAST,
                 org.kvxd.dust.device.redstone.ComparatorMode.SUBTRACT,
@@ -61,7 +74,7 @@ object MinecraftRedstone {
             BuiltinCells.constantHigh,
         ).map { logical ->
             CellProvider.fixed(logical, physicalView = { cells.load(logical.id.value) })
-        },
+        } + cells.provider(ClockCell.NAME, ClockCell::logicalType),
     )
 
     val technology: RedstoneTechnology = technology()

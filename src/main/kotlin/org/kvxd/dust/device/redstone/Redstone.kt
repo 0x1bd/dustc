@@ -159,8 +159,14 @@ object Redstone {
         }
     }
 
-    private fun comparatorSidePower(access: BlockAccess, pos: BlockPos, side: Direction): Int =
-        redstonePower(access, pos, side)
+    private fun comparatorSidePower(access: BlockAccess, pos: BlockPos, side: Direction): Int {
+        val state = access.blockAt(pos)
+        return if (state.type == BlockType.REDSTONE_WIRE) {
+            state[Properties.POWER]
+        } else {
+            redstonePower(access, pos, side)
+        }
+    }
 
     fun repeaterShouldBeLocked(access: BlockAccess, pos: BlockPos, facing: Direction): Boolean =
         repeaterLockPower(access, pos, facing.rotateClockwise()) > 0 ||

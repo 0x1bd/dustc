@@ -9,6 +9,7 @@ import org.kvxd.dust.device.block.ComponentKind
 import org.kvxd.dust.netlist.SequentialSimulator
 import org.kvxd.dust.netlist.booleanNetlist
 import org.kvxd.dust.sim.GateLevelSimulator
+import org.kvxd.dust.technology.CellSize
 
 class ClockedStorageTest {
     @Test
@@ -178,6 +179,7 @@ class ClockedStorageTest {
         ).single()
         val design = circuit.compile().physical
         val dffCell = design.cells.single { it.cell.name == "dff" }.cell
+        assertEquals(CellSize(12, 2, 6), dffCell.size)
         assertEquals(1, dffCell.blocks.count { it.second.type.component == ComponentKind.COMPARATOR })
         assertEquals(3, dffCell.blocks.count { it.second.type.component == ComponentKind.REPEATER })
         val simulator = GateLevelSimulator(design.matrix)

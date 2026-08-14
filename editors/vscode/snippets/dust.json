@@ -72,6 +72,11 @@
     "description": "Store a bus when the clock changes from 0 to 1",
     "body": ["register(${1:data}, ${2:clock})"]
   },
+  "Generated clock": {
+    "prefix": "clock",
+    "description": "Generate a repeating clock with a period measured in redstone ticks",
+    "body": ["clock<${1:10}>(${2:enabled})"]
+  },
   "Enabled register": {
     "prefix": "enabled_register",
     "description": "Capture a bus when enable is high",
