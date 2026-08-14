@@ -33,10 +33,13 @@ class SequentialSimulator(private val netlist: BooleanNetlist) {
         val clockLevels = edgeTriggered.associateWith(::clockLevel)
         val sampled = edgeTriggered.mapNotNull { instance ->
             val trigger = (instance.type.behavior as CellBehavior.Stateful).trigger
-                as CellBehavior.Trigger.EdgeTriggered
+                    as CellBehavior.Trigger.EdgeTriggered
             val previous = previousClocks.getValue(instance)
             val current = clockLevels.getValue(instance)
-            if (trigger.edge.matches(previous, current)) instance to evaluate(instance, cellState.getValue(instance)) else null
+            if (trigger.edge.matches(previous, current)) instance to evaluate(
+                instance,
+                cellState.getValue(instance)
+            ) else null
         }
         sampled.forEach { (instance, result) -> commit(instance, result) }
 
@@ -52,6 +55,11 @@ class SequentialSimulator(private val netlist: BooleanNetlist) {
             }
         }
         error("${netlist.name} did not settle after $limit logical iterations")
+    }
+
+    fun levelAt(signal: Signal): Boolean {
+        require(signal.index in state.indices) { "$signal is outside ${netlist.name}" }
+        return state[signal.index]
     }
 
     private fun evaluateState(instance: CellInstance, previous: BooleanArray) {
@@ -75,7 +83,7 @@ class SequentialSimulator(private val netlist: BooleanNetlist) {
 
     private fun clockLevel(instance: CellInstance): Boolean {
         val trigger = (instance.type.behavior as CellBehavior.Stateful).trigger
-            as CellBehavior.Trigger.EdgeTriggered
+                as CellBehavior.Trigger.EdgeTriggered
         return inputs(instance).getValue(trigger.clockPort).single()
     }
 

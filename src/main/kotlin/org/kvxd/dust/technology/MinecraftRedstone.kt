@@ -8,6 +8,8 @@ import org.kvxd.dust.cell.library.BuiltinCells
 import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.cell.library.CellProvider
 import org.kvxd.dust.cell.library.ClockCell
+import org.kvxd.dust.cell.library.DisplayMatrixCell
+import org.kvxd.dust.cell.library.DisplayPixelCell
 import org.kvxd.dust.technology.definition.CellDefinitionLoader
 
 object MinecraftRedstone {
@@ -25,6 +27,7 @@ object MinecraftRedstone {
         BuiltinCells.outputPad,
         BuiltinCells.inputTerminal,
         BuiltinCells.outputTerminal,
+        DisplayPixelCell.logicalType,
     ).associateBy { it.id.value }
 
     private val cells = CellDefinitionLoader(
@@ -35,6 +38,7 @@ object MinecraftRedstone {
             "torch-east" to RedstoneBlocks.wallTorch(Direction.EAST),
             "torch-north" to RedstoneBlocks.wallTorch(Direction.NORTH),
             "torch-south" to RedstoneBlocks.wallTorch(Direction.SOUTH),
+            "torch-west" to RedstoneBlocks.wallTorch(Direction.WEST),
             "repeater-east" to RedstoneBlocks.repeater(Direction.EAST),
             "repeater-north" to RedstoneBlocks.repeater(Direction.NORTH),
             "repeater-south" to RedstoneBlocks.repeater(Direction.SOUTH),
@@ -74,7 +78,8 @@ object MinecraftRedstone {
             BuiltinCells.constantHigh,
         ).map { logical ->
             CellProvider.fixed(logical, physicalView = { cells.load(logical.id.value) })
-        } + cells.provider(ClockCell.NAME, ClockCell::logicalType),
+        } + cells.provider(ClockCell.NAME, ClockCell::logicalType) +
+            cells.provider(DisplayMatrixCell.NAME, DisplayMatrixCell::logicalType),
     )
 
     val technology: RedstoneTechnology = technology()

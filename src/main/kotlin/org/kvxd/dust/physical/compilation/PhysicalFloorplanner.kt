@@ -69,6 +69,11 @@ internal class PhysicalFloorplanner(
             localCells.maxOf { it.origin.y + it.cell.size.y },
         )
         val activeGlobalPlaneY = activeRouteHeight + GLOBAL_PLANE_CLEARANCE
+        val maximumViaRise = activeGlobalPlaneY - technology.lowerPlaneY
+        val viaRepeaterLandings =
+            (maximumViaRise + MAXIMUM_VIA_DUST_RISE - 1) / MAXIMUM_VIA_DUST_RISE - 1
+        val routeLanePitch = technology.lanePitch +
+            viaRepeaterLandings.coerceAtLeast(0) * VIA_REPEATER_LANDING_WIDTH
         val globalTracks = assignGlobalTracks(
             planGlobalTracks(globalSignals, localConnections, netlist.clockSignals),
             cellWidth,
@@ -150,7 +155,7 @@ internal class PhysicalFloorplanner(
                     .forEach { draft ->
                         tierLaneOffsets[draft.index] = offset
                         val laneCount = draft.routes.maxOfOrNull { it.lane + 1 } ?: 0
-                        if (laneCount > 0) offset += (laneCount - 1) * technology.lanePitch + technology.isolation + 1
+                        if (laneCount > 0) offset += (laneCount - 1) * routeLanePitch + technology.isolation + 1
                     }
             }
         }
@@ -158,31 +163,27 @@ internal class PhysicalFloorplanner(
             rowDrafts.map { draft ->
                 val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
                 val baseViaReach = technology.viaSignalOffsets.maxOf { abs(it.z) }
-                val globalViaReach = abs(
-                    router.viaOffsets(
-                        ViaSense.DOWN,
-                        laneY,
-                        activeGlobalPlaneY,
-                        ViaFlow.DOWNWARD,
-                        true,
-                        viaPolicy,
-                    ).last().z,
-                )
+                val globalViaReach = router.viaOffsets(
+                    ViaSense.DOWN,
+                    laneY,
+                    activeGlobalPlaneY,
+                    ViaFlow.DOWNWARD,
+                    true,
+                    viaPolicy,
+                ).maxOf { abs(it.z) }
                 val endpointViaReach = draft.routes
                     .flatMap { route -> listOf(route.source) + route.sinks }
                     .maxOfOrNull { endpoint ->
                         when (endpoint) {
                             is Endpoint.Cell -> if (endpoint.sense == ViaSense.DOWN) {
-                                abs(
-                                    router.viaOffsets(
-                                        endpoint.sense,
-                                        laneY,
-                                        endpoint.position.y,
-                                        ViaFlow.DOWNWARD,
-                                        false,
-                                        viaPolicy,
-                                    ).last().z,
-                                )
+                                router.viaOffsets(
+                                    endpoint.sense,
+                                    laneY,
+                                    endpoint.position.y,
+                                    ViaFlow.DOWNWARD,
+                                    false,
+                                    viaPolicy,
+                                ).maxOf { abs(it.z) }
                             } else {
                                 baseViaReach
                             }
@@ -194,7 +195,7 @@ internal class PhysicalFloorplanner(
                 val laneBase =
                     bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
                 val routes = draft.routes.map { route ->
-                    route.placeAt(0, laneY, laneBase + route.lane * technology.lanePitch, viaPolicy)
+                    route.placeAt(0, laneY, laneBase + route.lane * routeLanePitch, viaPolicy)
                 }
                 val southExtent = routes.maxOfOrNull { it.southernExtent(globalViaReach) }
                     ?: (bandCellDepths[bands[draft.index]] - 1)
@@ -210,7 +211,7 @@ internal class PhysicalFloorplanner(
                                 ViaFlow.DOWNWARD,
                                 false,
                                 viaPolicy,
-                            ).last().z
+                            ).maxOf { it.z }
                         } ?: Int.MIN_VALUE
                 } ?: Int.MIN_VALUE
                 PreparedRow(
@@ -232,7 +233,7 @@ internal class PhysicalFloorplanner(
                 val laneBase =
                     bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
                 val routes = draft.routes.map { route ->
-                    route.placeAt(0, laneY, laneBase + route.lane * technology.lanePitch, viaPolicy)
+                    route.placeAt(0, laneY, laneBase + route.lane * routeLanePitch, viaPolicy)
                 }
                 val southExtent = routes.maxOfOrNull { route ->
                     maxOf(
@@ -288,7 +289,7 @@ internal class PhysicalFloorplanner(
                 route.placeAt(
                     baseZ,
                     preparedRow.laneY,
-                    baseZ + preparedRow.laneBase + route.lane * technology.lanePitch,
+                    baseZ + preparedRow.laneBase + route.lane * routeLanePitch,
                     viaPolicy,
                 )
             }

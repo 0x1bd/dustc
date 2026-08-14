@@ -57,7 +57,9 @@ input value: bits<8>
 output result: bits<16>
 ```
 
-Bus widths are between 1 and 64 bits. Bit 0 is the least-significant bit when a bus is interpreted as an integer.
+Bus widths are between 1 and 4096 bits. Bit 0 is the least-significant bit when a bus is interpreted as an integer.
+Integer-valued helpers such as `const_bits` and the word-evaluation API remain limited to 64-bit values. Wider buses
+are intended for structural state such as display framebuffers.
 
 Index a bus with `[]`:
 
@@ -379,6 +381,23 @@ repeaters in each row always have the same delay.
 Physical compilation reports `minimumSafeStepTicks`/`minimumClockPeriodTicks`, hold slack, and maximum clock skew.
 Supplying an explicit clock period through the compiler API makes setup, hold, or skew violations reject the build.
 Externally stepped builds always reject hold violations and report their minimum safe interval.
+
+### Persistent lamp display
+
+`display<WIDTH, HEIGHT>(x, y, pixel_value, write, clear, clock)` creates a persistent framebuffer backed by ordinary
+registers and presents it through a hard-macro lamp wall. Width and height may independently range from 8 through 64.
+Each logical pixel is rendered as an adjacent 2x2 cluster of redstone lamps. Coordinates outside a non-power-of-two
+display do not select a pixel.
+
+On a 0-to-1 clock change, `write` stores `pixel_value` at `(x, y)`. `clear` has priority and synchronously clears every
+pixel. Both controls therefore need a clock change before they take effect.
+
+```dust
+display<8, 8>(x, y, true, plot, clear, clock)
+```
+
+The complete [`display-demo.dust`](../examples/display-demo.dust) example writes a diagonal line one point at a time.
+Larger displays are supported but contain proportionally more registers and routing.
 
 ## Calling modules
 

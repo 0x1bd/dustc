@@ -1,0 +1,43 @@
+module display_next<const WIDTH: int, const HEIGHT: int>(
+    input pixels: bits<WIDTH * HEIGHT>,
+    input x: bits<clog2(WIDTH)>,
+    input y: bits<clog2(HEIGHT)>,
+    input pixel_value: bit,
+    input write: bit,
+    output next_pixels: bits<WIDTH * HEIGHT>,
+) {
+    let mut selected_columns = const_bits<WIDTH>(0)
+    let mut selected_rows = const_bits<HEIGHT>(0)
+    for column in 0..WIDTH {
+        selected_columns[column] = equal<clog2(WIDTH)>(x, const_bits<clog2(WIDTH)>(column)).y
+    }
+    for row in 0..HEIGHT {
+        selected_rows[row] = equal<clog2(HEIGHT)>(y, const_bits<clog2(HEIGHT)>(row)).y
+    }
+
+    let mut updated = pixels
+    for row in 0..HEIGHT {
+        for column in 0..WIDTH {
+            let index = row * WIDTH + column
+            let selected = write & selected_rows[row] & selected_columns[column]
+            updated[index] = if selected { pixel_value } else { pixels[index] }
+        }
+    }
+    next_pixels = updated
+}
+
+module display<const WIDTH: int = 8, const HEIGHT: int = 8>(
+    input x: bits<clog2(WIDTH)>,
+    input y: bits<clog2(HEIGHT)>,
+    input pixel_value: bit,
+    input write: bit,
+    input clear: bit,
+    input clock: bit,
+) {
+    let rec pixels = resettable_register<WIDTH * HEIGHT>(
+        display_next<WIDTH, HEIGHT>(pixels, x, y, pixel_value, write).next_pixels,
+        clear,
+        clock,
+    )
+    display_matrix<WIDTH, HEIGHT>(pixels)
+}

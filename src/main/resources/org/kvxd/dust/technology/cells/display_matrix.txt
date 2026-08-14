@@ -1,0 +1,26 @@
+cell display_matrix<WIDTH: int in 8..64, HEIGHT: int in 8..64>
+
+pins:
+for y in 0..HEIGHT {
+    for x in 0..WIDTH {
+        pixels[y * WIDTH + x] input @(x * 2 + 1),(y * 2 + 1),6 abut=false required=1
+    }
+}
+
+layout:
+for y in 0..HEIGHT {
+    for x in 0..WIDTH {
+        include display-pixel @(x * 2),(y * 2),0
+    }
+}
+
+observations:
+for y in 0..HEIGHT {
+    for x in 0..WIDTH {
+        pixel[x,y] @(x * 2),(y * 2 + 1),0
+    }
+}
+
+placement:
+exclusive-row=true
+visible-edge=north

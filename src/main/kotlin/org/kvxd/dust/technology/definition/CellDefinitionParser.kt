@@ -38,30 +38,34 @@ internal object CellDefinitionParser {
         validateOptionalOrder(parameters, sourceName)
         val values = bind(parameters, arguments, lines.first().location)
 
-        val palette = expanded(sections["palette"].orEmpty(), values).map { line ->
+        val paletteLines = expanded(sections["palette"].orEmpty(), values)
+        val pinLines = expanded(sections["pins"].orEmpty(), values)
+        val layoutLines = expanded(sections["layout"].orEmpty(), values)
+        val entityLines = expanded(
+            sections["block-entities"].orEmpty() + sections["block_entities"].orEmpty(),
+            values,
+        )
+        val observationLines = expanded(sections["observations"].orEmpty(), values)
+        val palette = paletteLines.map { line ->
             val parts = line.text.split(Regex("\\s*=\\s*"), limit = 2)
             if (parts.size != 2 || parts[0].length != 1) line.location.error("invalid palette entry '${line.text}'")
             CellPaletteEntry(parts[0].single(), interpolate(parts[1], line.variables, line.location))
         }
-        val pins = expanded(sections["pins"].orEmpty(), values).map(::pin)
+        val pins = pinLines.map(::pin)
         val layers = layers(sections["layers"].orEmpty(), values)
-        val layout = expanded(sections["layout"].orEmpty(), values).map(::layout)
-        val entities = expanded(
-            sections["block-entities"].orEmpty() + sections["block_entities"].orEmpty(),
-            values,
-        ).map(::blockEntity)
-        val observations = expanded(sections["observations"].orEmpty(), values).map(::observation)
+        val layout = layoutLines.map(::layout)
+        val entities = entityLines.map(::blockEntity)
+        val observations = observationLines.map(::observation)
         val timingLines = expanded(sections["timing"].orEmpty(), values)
         val placementLines = expanded(sections["placement"].orEmpty(), values)
         val sourceLocations = buildMap {
-            pins.forEachIndexed { index, _ -> put("pin:$index", expanded(sections["pins"].orEmpty(), values)[index].location) }
-            layout.forEachIndexed { index, _ -> put("layout:$index", expanded(sections["layout"].orEmpty(), values)[index].location) }
+            pins.forEachIndexed { index, _ -> put("pin:$index", pinLines[index].location) }
+            layout.forEachIndexed { index, _ -> put("layout:$index", layoutLines[index].location) }
             entities.forEachIndexed { index, _ ->
-                val source = sections["block-entities"].orEmpty() + sections["block_entities"].orEmpty()
-                put("block-entity:$index", expanded(source, values)[index].location)
+                put("block-entity:$index", entityLines[index].location)
             }
             observations.forEachIndexed { index, _ ->
-                put("observation:$index", expanded(sections["observations"].orEmpty(), values)[index].location)
+                put("observation:$index", observationLines[index].location)
             }
             put("definition", lines.first().location)
         }
@@ -114,7 +118,7 @@ internal object CellDefinitionParser {
     }
 
     private fun declaration(line: SourceLine): Pair<String, List<CellParameter>> {
-        val match = Regex("cell\\s+([a-z][a-z0-9-]*)(?:\\s*<(.+)>)?").matchEntire(line.text)
+        val match = Regex("cell\\s+([a-z][a-z0-9_-]*)(?:\\s*<(.+)>)?").matchEntire(line.text)
             ?: line.location.error("definition must start with 'cell <name>'")
         val parameters = match.groupValues[2].takeIf(String::isNotBlank)
             ?.let(::splitTopLevel)
@@ -292,7 +296,7 @@ internal object CellDefinitionParser {
     }
 
     private fun specialization(text: String, line: ExpandedLine): Pair<String, List<Int>> {
-        val match = Regex("([a-z][a-z0-9-]*)(?:<(.+)>)?").matchEntire(text)
+        val match = Regex("([a-z][a-z0-9_-]*)(?:<(.+)>)?").matchEntire(text)
             ?: line.location.error("invalid included cell '$text'")
         val arguments = match.groupValues[2].takeIf(String::isNotBlank)?.let(::splitTopLevel).orEmpty()
             .map { integer(it, line.variables, line.location) }

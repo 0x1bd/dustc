@@ -17,7 +17,7 @@ internal object CellDefinitionValidator {
     }
 
     private fun validateDefinition(definition: CellDefinition, templates: Set<String>) {
-        require(definition.name.matches(Regex("[a-z][a-z0-9-]*"))) { "invalid cell name '${definition.name}'" }
+        require(definition.name.matches(Regex("[a-z][a-z0-9_-]*"))) { "invalid cell name '${definition.name}'" }
         require(definition.palette.map { it.symbol }.distinct().size == definition.palette.size) {
             "${definition.name} repeats a palette symbol"
         }

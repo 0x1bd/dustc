@@ -228,7 +228,7 @@ internal class PhysicalRouter(
             run.track.trunkX,
             tap.viaX,
             trunkDecay,
-            globalViaDescent(run.track, tap.laneY, ViaFlow.DOWNWARD, run.viaPolicy),
+            globalViaInputDecay(run.track, tap.laneY, ViaFlow.DOWNWARD, run.viaPolicy),
         )
         val key = TapKey(run.track, tap.laneY, tap.laneZ)
         log.tapDecay[key] = connector.decay
@@ -265,7 +265,8 @@ internal class PhysicalRouter(
             initialDecay = initialDecay,
             protectedPositions = protected,
             viaReserve = taps.maxOf {
-                abs(it.viaX - run.track.trunkX) + globalViaDescent(run.track, it.laneY, ViaFlow.DOWNWARD, run.viaPolicy)
+                abs(it.viaX - run.track.trunkX) +
+                    globalViaInputDecay(run.track, it.laneY, ViaFlow.DOWNWARD, run.viaPolicy)
             },
         ) { z, decay, repeater ->
             if (repeater) repeaters++
@@ -350,18 +351,13 @@ internal class PhysicalRouter(
 
     private fun LocalRoute.placeSourceEndpoint(sink: RouteSink, inboundDecay: Int): Carried = when (source) {
         is Endpoint.Cell -> {
-            val descent = endpointViaDescent(source, laneY, ViaFlow.DOWNWARD, viaPolicy)
-            placeVia(
-                sink,
-                source.x,
-                laneY,
-                laneZ,
+            val via = viaSteps(
                 source.sense,
-                signal,
+                laneY,
                 source.position.y,
                 ViaFlow.DOWNWARD,
                 false,
-                viaPolicy
+                viaPolicy,
             )
             val accessZ = laneZ + viaOffsets(
                 source.sense,
@@ -379,10 +375,11 @@ internal class PhysicalRouter(
                 Direction.SOUTH,
                 signal,
                 technology.signalStrength - source.driveStrength + 1,
-                descent,
+                via.inputDecay,
                 1,
             )
-            Carried(branch.decay + descent, branch.repeaters)
+            val throughVia = placeVia(sink, source.x, laneY, laneZ, signal, via, branch.decay)
+            Carried(throughVia.decay, branch.repeaters + throughVia.repeaters)
         }
 
         is Endpoint.Global -> {
@@ -391,14 +388,17 @@ internal class PhysicalRouter(
                 source.x,
                 laneY,
                 laneZ,
-                source.sense,
                 signal,
-                source.track.planeY,
-                ViaFlow.DOWNWARD,
-                true,
-                viaPolicy
+                viaSteps(
+                    source.sense,
+                    laneY,
+                    source.track.planeY,
+                    ViaFlow.DOWNWARD,
+                    true,
+                    viaPolicy,
+                ),
+                inboundDecay,
             )
-            Carried(inboundDecay + globalViaDescent(source.track, laneY, ViaFlow.DOWNWARD, viaPolicy), 0)
         }
     }
 
@@ -410,19 +410,15 @@ internal class PhysicalRouter(
     ): Carried =
         when (endpoint) {
             is Endpoint.Cell -> {
-                val descent = endpointViaDescent(endpoint, laneY, ViaFlow.UPWARD, viaPolicy)
-                placeVia(
-                    sink,
-                    endpoint.x,
-                    laneY,
-                    laneZ,
+                val via = viaSteps(
                     endpoint.sense,
-                    signal,
+                    laneY,
                     endpoint.position.y,
                     ViaFlow.UPWARD,
                     false,
                     viaPolicy,
                 )
+                val throughVia = placeVia(sink, endpoint.x, laneY, laneZ, signal, via, laneDecay)
                 val accessZ = laneZ + viaOffsets(
                     endpoint.sense,
                     laneY,
@@ -444,11 +440,17 @@ internal class PhysicalRouter(
                     needsUpperDetour,
                     Direction.NORTH,
                     signal,
-                    laneDecay + descent,
-                    descent,
+                    throughVia.decay,
+                    0,
                     endpoint.requiredStrength,
                     clockPadding,
-                )
+                ).let { branch ->
+                    Carried(
+                        branch.decay,
+                        throughVia.repeaters + branch.repeaters,
+                        branch.extraDelayTicks,
+                    )
+                }
             }
 
             is Endpoint.Global -> {
@@ -457,14 +459,17 @@ internal class PhysicalRouter(
                     endpoint.x,
                     laneY,
                     laneZ,
-                    endpoint.sense,
                     signal,
-                    endpoint.track.planeY,
-                    ViaFlow.UPWARD,
-                    true,
-                    viaPolicy,
+                    viaSteps(
+                        endpoint.sense,
+                        laneY,
+                        endpoint.track.planeY,
+                        ViaFlow.UPWARD,
+                        true,
+                        viaPolicy,
+                    ),
+                    laneDecay,
                 )
-                Carried(laneDecay + globalViaDescent(endpoint.track, laneY, ViaFlow.UPWARD, viaPolicy), 0)
             }
         }
 
@@ -598,25 +603,26 @@ internal class PhysicalRouter(
 
     private val baseViaDescent: Int get() = technology.viaSignalOffsets.size - 1
 
-    private fun globalViaDescent(track: GlobalTrack, laneY: Int, flow: ViaFlow, viaPolicy: ViaPolicy): Int =
-        viaOffsets(ViaSense.DOWN, laneY, track.planeY, flow, true, viaPolicy).size - 1
-
-    private fun endpointViaDescent(
-        endpoint: Endpoint,
+    private fun globalViaInputDecay(
+        track: GlobalTrack,
         laneY: Int,
         flow: ViaFlow,
         viaPolicy: ViaPolicy,
-    ): Int = when (endpoint) {
-        is Endpoint.Cell -> viaOffsets(endpoint.sense, laneY, endpoint.position.y, flow, false, viaPolicy).size - 1
-        is Endpoint.Global -> globalViaDescent(endpoint.track, laneY, flow, viaPolicy)
-    }
+    ): Int = viaSteps(ViaSense.DOWN, laneY, track.planeY, flow, true, viaPolicy).inputDecay
 
     private fun endpointLaneReserve(
         endpoint: Endpoint,
         laneY: Int,
         flow: ViaFlow,
         viaPolicy: ViaPolicy,
-    ): Int = endpointViaDescent(endpoint, laneY, flow, viaPolicy) +
+    ): Int = viaSteps(
+        endpoint.viaSense(),
+        laneY,
+        endpoint.targetY(),
+        flow,
+        endpoint is Endpoint.Global,
+        viaPolicy,
+    ).inputDecay +
             if (endpoint is Endpoint.Cell && endpoint.sense == ViaSense.UP &&
                 !usesGlassTower(laneY, endpoint.position.y, flow, viaPolicy)
             ) 1 else 0
@@ -626,23 +632,64 @@ internal class PhysicalRouter(
         x: Int,
         laneY: Int,
         laneZ: Int,
-        sense: ViaSense,
         signal: Signal,
+        via: ViaPath,
+        initialDecay: Int,
+    ): Carried {
+        val origin = BlockPos(x, laneY, laneZ)
+        var decay = initialDecay
+        var repeaters = 0
+        val steps = if (via.flow == ViaFlow.UPWARD) via.steps else via.steps.asReversed()
+        var previousWasRepeater = false
+        steps.forEachIndexed { index, step ->
+            val state = if (step.repeater) {
+                repeaters++
+                decay = 0
+                technology.repeater(via.travelForSignal)
+            } else {
+                if (index > 0 && !previousWasRepeater) decay++
+                technology.wire
+            }
+            sink.place(origin + step.position, state, via.support, signal)
+            previousWasRepeater = step.repeater
+        }
+        return Carried(decay, repeaters)
+    }
+
+    private data class ViaStep(val position: BlockPos, val repeater: Boolean = false)
+
+    private data class ViaPath(
+        val steps: List<ViaStep>,
+        val flow: ViaFlow,
+        val travelForSignal: Direction,
+        val support: BlockState,
+        val inputDecay: Int,
+    )
+
+    private fun viaSteps(
+        sense: ViaSense,
+        laneY: Int,
         targetY: Int,
         flow: ViaFlow,
         global: Boolean,
         viaPolicy: ViaPolicy,
-    ) {
-        val origin = BlockPos(x, laneY, laneZ)
+    ): ViaPath {
+        val positions = viaGeometry(sense, laneY, targetY, flow, global, viaPolicy)
+        val direction = if (sense == ViaSense.DOWN) Direction.NORTH else Direction.SOUTH
+        val signalTravel = if (flow == ViaFlow.UPWARD) direction else direction.opposite
+        val steps = positions.map { ViaStep(it.position, it.repeater) }
+        val signalOrder = if (flow == ViaFlow.UPWARD) steps else steps.asReversed()
+        val firstRepeater = signalOrder.indexOfFirst(ViaStep::repeater)
+        val inputDecay = (if (firstRepeater < 0) signalOrder.lastIndex else firstRepeater - 1).coerceAtLeast(0)
         val support = if (!global && usesGlassTower(laneY, targetY, flow, viaPolicy)) {
             technology.routeSupport
         } else {
             technology.viaSupport
         }
-        viaOffsets(sense, laneY, targetY, flow, global, viaPolicy).forEach { offset ->
-            sink.place(origin + offset, technology.wire, support, signal)
-        }
+        return ViaPath(steps, flow, signalTravel, support, inputDecay)
     }
+
+    private data class ViaOffset(val position: BlockPos, val repeater: Boolean = false)
 
     internal fun viaOffsets(
         sense: ViaSense,
@@ -651,13 +698,50 @@ internal class PhysicalRouter(
         flow: ViaFlow,
         global: Boolean,
         viaPolicy: ViaPolicy,
-    ): List<BlockPos> {
+    ): List<BlockPos> = viaGeometry(sense, laneY, targetY, flow, global, viaPolicy).map(ViaOffset::position)
+
+    private fun viaGeometry(
+        sense: ViaSense,
+        laneY: Int,
+        targetY: Int,
+        flow: ViaFlow,
+        global: Boolean,
+        viaPolicy: ViaPolicy,
+    ): List<ViaOffset> {
         val baseRise = technology.viaSignalOffsets.last().y
         require(targetY - laneY >= baseRise) { "cannot route from lane Y=$laneY to target Y=$targetY" }
+        val rise = targetY - laneY
+        if (rise > MAXIMUM_VIA_DUST_RISE) {
+            val direction = if (sense == ViaSense.DOWN) -1 else 1
+            var current = BlockPos.ORIGIN
+            val segmentCount = (rise + MAXIMUM_VIA_DUST_RISE - 1) / MAXIMUM_VIA_DUST_RISE
+            val shortSegment = rise / segmentCount
+            val longerSegments = rise % segmentCount
+            val landingLevels = buildSet {
+                var level = 0
+                repeat(segmentCount - 1) { segment ->
+                    level += shortSegment + if (segment < longerSegments) 1 else 0
+                    add(level)
+                }
+            }
+            return buildList {
+                add(ViaOffset(current))
+                repeat(rise) {
+                    if (current.y in landingLevels) {
+                        current += BlockPos(0, 0, direction)
+                        add(ViaOffset(current, repeater = true))
+                        current += BlockPos(0, 0, direction)
+                        add(ViaOffset(current))
+                    }
+                    current += BlockPos(0, 1, direction)
+                    add(ViaOffset(current))
+                }
+            }
+        }
         if (!global && usesGlassTower(laneY, targetY, flow, viaPolicy)) {
             val direction = if (sense == ViaSense.DOWN) -1 else 1
             return (0..targetY - laneY).map { step ->
-                BlockPos(0, step, if (step % 2 == 0) 0 else direction)
+                ViaOffset(BlockPos(0, step, if (step % 2 == 0) 0 else direction))
             }
         }
         val base = technology.viaSignalOffsets
@@ -666,10 +750,11 @@ internal class PhysicalRouter(
         val down = base + (1..extra).map { step ->
             BlockPos(last.x, last.y + step, last.z - step)
         }
-        return when (sense) {
+        val oriented = when (sense) {
             ViaSense.DOWN -> down
             ViaSense.UP -> down.map { BlockPos(it.x, it.y, -it.z) }
         }
+        return oriented.map(::ViaOffset)
     }
 
     private fun usesGlassTower(
@@ -816,7 +901,10 @@ internal class PhysicalRouter(
             }
             val supportPos = pos.offset(Direction.DOWN)
             if (supportPos in owners) {
-                throw CandidateGeometryException("signal ${signal.index} needs support through routed wire at $supportPos")
+                throw CandidateGeometryException(
+                    "signal ${signal.index} at $pos needs support through signal " +
+                        "${owners[supportPos]?.index} at $supportPos",
+                )
             }
             supports.putIfAbsent(supportPos, support)
             val previous = owners.putIfAbsent(pos, signal)

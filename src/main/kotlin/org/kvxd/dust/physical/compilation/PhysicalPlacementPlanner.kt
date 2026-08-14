@@ -62,6 +62,7 @@ internal class PhysicalPlacementPlanner(
         val candidates = rowCandidates(specs)
         val reserveIoSigns = io == PhysicalIo.DEBUG_PADS && layout != null
         val plans = mutableListOf<FloorplanCandidate>()
+        var lastGeometryFailure: CandidateGeometryException? = null
         progress.onProgress(
             PhysicalProgressEvent(
                 PhysicalProgressStage.PLACEMENT,
@@ -95,8 +96,8 @@ internal class PhysicalPlacementPlanner(
                             tierCount,
                             candidateIndex + 1,
                         )
-                    } catch (_: CandidateGeometryException) {
-
+                    } catch (cause: CandidateGeometryException) {
+                        lastGeometryFailure = cause
                     }
                 }
             }
@@ -112,7 +113,10 @@ internal class PhysicalPlacementPlanner(
                 ),
             )
         }
-        require(plans.isNotEmpty()) { "no feasible floorplan for ${specs.size} cells" }
+        require(plans.isNotEmpty()) {
+            "no feasible floorplan for ${specs.size} cells" +
+                (lastGeometryFailure?.message?.let { ": $it" } ?: "")
+        }
         val selected = plans.minWith(compareByFloorplanCandidate())
         if (specs.size > UPWARD_GLASS_PLACEMENT_GATE_LIMIT) {
             val glass = try {

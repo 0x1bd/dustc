@@ -102,8 +102,8 @@ class DustParameterizationTest {
             "duplicate module parameter 'WIDTH'",
         )
         assertDiagnostic(
-            "module m<const WIDTH: int = 65>(input a: bits<WIDTH>, output y: bits<WIDTH>) { y = a }",
-            "bus width must be between 1 and 64",
+            "module m<const WIDTH: int = 4097>(input a: bits<WIDTH>, output y: bits<WIDTH>) { y = a }",
+            "bus width must be between 1 and 4096",
         )
         assertDiagnostic(
             "module m<const WIDTH: int = 2147483647>(input a: bit, output y: bit) { " +
@@ -115,6 +115,17 @@ class DustParameterizationTest {
                 "let next = m<WIDTH + 1>(a) y = next.y }",
             "recursive module specialization",
         )
+    }
+
+    @Test
+    fun `word evaluation rejects structural buses wider than sixty four bits`() {
+        val circuit = DustLanguage.compile(
+            "module wide(input value: bits<65>, output result: bits<65>) { result = value }",
+            "wide.dust",
+        ).single()
+
+        val error = assertFailsWith<IllegalArgumentException> { circuit.evaluate("value" to 0uL) }
+        assertTrue("word evaluation supports ports up to 64 bits" in error.message.orEmpty())
     }
 
     @Test

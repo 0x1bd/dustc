@@ -5,6 +5,7 @@ import org.kvxd.dust.CircuitPort
 import org.kvxd.dust.CircuitPortDirection
 import org.kvxd.dust.cell.definition.PortDirection as CellPortDirection
 import org.kvxd.dust.cell.library.CellLibrary
+import org.kvxd.dust.lang.MAX_BUS_WIDTH
 import org.kvxd.dust.lang.diagnostic.DiagnosticReporter
 import org.kvxd.dust.lang.lexing.Token
 import org.kvxd.dust.lang.lexing.TokenType
@@ -278,7 +279,9 @@ internal class Elaborator(
                     fail(call.location, "a recursive ${call.name} binding needs an explicit width parameter")
                 }
                 integer(call.parameters.single(), environment, outputs, builder, callStack).also {
-                    if (it !in 1..ULong.SIZE_BITS) fail(call.parameters.single().location, "register width must be between 1 and ${ULong.SIZE_BITS}")
+                    if (it !in 1..MAX_BUS_WIDTH) {
+                        fail(call.parameters.single().location, "register width must be between 1 and $MAX_BUS_WIDTH")
+                    }
                 }
             }
 
@@ -672,8 +675,8 @@ internal class Elaborator(
         return specializations.getOrPut(key) {
             val ports = module.ports.map { port ->
                 val width = constantInteger(port.width, arguments)
-                if (width !in 1..ULong.SIZE_BITS) {
-                    fail(port.width.location, "bus width must be between 1 and ${ULong.SIZE_BITS}, got $width")
+                if (width !in 1..MAX_BUS_WIDTH) {
+                    fail(port.width.location, "bus width must be between 1 and $MAX_BUS_WIDTH, got $width")
                 }
                 ResolvedPort(port, width)
             }

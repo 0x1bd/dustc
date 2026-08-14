@@ -63,9 +63,12 @@ class RedstoneTechnology internal constructor(
 
     private fun validateCell(cell: StandardCell) {
         if (!validatedCells.add(cell)) return
-        cell.pins.map { it.position.x }.sorted().zipWithNext().forEach { (left, right) ->
-            require(right - left > isolation) {
-                "${cell.name} pins occupy columns $left and $right, which do not clear isolation $isolation"
+        cell.pins.groupBy { it.position.y }.forEach { (planeY, pins) ->
+            pins.map { it.position.x }.sorted().zipWithNext().forEach { (left, right) ->
+                require(right - left > isolation) {
+                    "${cell.name} pins occupy columns $left and $right on Y=$planeY, " +
+                            "which do not clear isolation $isolation"
+                }
             }
         }
     }

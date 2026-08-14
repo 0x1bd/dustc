@@ -38,7 +38,8 @@ You can also keep the executable in the repository or another working directory 
 
 ## Build from source with Gradle
 
-The project targets Java 21. Clone the repository and use the included Gradle wrapper:
+The project targets Java 21. Clone the
+repository and use the included Gradle wrapper:
 
 ```shell
 git clone https://github.com/0x1bd/dustc.git
@@ -208,8 +209,9 @@ module main(
 ```
 
 Dust supports buses, Boolean operators, compile-time loops and parameters, local bindings, module composition, a bundled
-generic arithmetic/comparison library, multiplexers, latches, clocked registers, generated clocks, and physical
-placement attributes such as `#[near(...)]`, `#[tier(...)]`, `#[edge(...)]`, and `#[panel]`.
+generic arithmetic/comparison library, multiplexers, latches, clocked registers, generated clocks, persistent 8x8
+through 64x64 lamp displays, and physical placement attributes such as `#[near(...)]`, `#[tier(...)]`, `#[edge(...)]`,
+and `#[panel]`.
 
 See the [language reference](docs/language.md) for the complete syntax and semantics.
 The physical-cell format is documented in [text cell definitions](docs/cell-definitions.md).

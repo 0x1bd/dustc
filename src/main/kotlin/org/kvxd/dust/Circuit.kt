@@ -32,6 +32,7 @@ class Circuit internal constructor(
     fun lowerToBooleanNetlist(): BooleanNetlist = netlist
 
     fun evaluate(values: Map<String, ULong>): CircuitResult {
+        requireWordSizedPorts()
         require(values.keys == inputs.map { it.name }.toSet()) {
             "expected inputs ${inputs.map { it.name }}, got ${values.keys}"
         }
@@ -57,6 +58,7 @@ class Circuit internal constructor(
     fun evaluate(vararg values: Pair<String, ULong>): CircuitResult = evaluate(mapOf(*values))
 
     fun evaluateAll(vectors: List<Map<String, ULong>>): List<CircuitResult> {
+        requireWordSizedPorts()
         val inputNames = inputs.map { it.name }.toSet()
         val results = ArrayList<CircuitResult>(vectors.size)
         vectors.chunked(Long.SIZE_BITS).forEach { batch ->
@@ -92,5 +94,12 @@ class Circuit internal constructor(
             }
         }
         return results
+    }
+
+    private fun requireWordSizedPorts() {
+        val wider = ports.firstOrNull { it.width > ULong.SIZE_BITS } ?: return
+        throw IllegalArgumentException(
+            "word evaluation supports ports up to ${ULong.SIZE_BITS} bits; ${wider.name} is ${wider.width} bits"
+        )
     }
 }
