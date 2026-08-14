@@ -1,4 +1,4 @@
-module gates(
+module main(
     input operands {
         a: bit,
         b: bit,

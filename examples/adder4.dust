@@ -1,4 +1,4 @@
-module adder4(
+module main(
     #[panel]
     input operands {
         a: bits<4>,

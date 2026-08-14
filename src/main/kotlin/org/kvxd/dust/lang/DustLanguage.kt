@@ -76,18 +76,12 @@ object DustLanguage {
         source: String,
         sourceName: String = "<source>",
         requestedName: String? = null,
-        preferredName: String? = null,
         parameters: Map<String, Int> = emptyMap(),
         color: Boolean = false,
         cellLibrary: CellLibrary = MinecraftRedstone.technology.cellLibrary,
     ): Circuit {
-        val names = moduleNames(source, sourceName, color)
-        val selected = when {
-            requestedName != null -> requestedName
-            names.size == 1 -> names.single()
-            preferredName in names -> checkNotNull(preferredName)
-            else -> error("$sourceName declares $names; select one with --module")
-        }
+        moduleNames(source, sourceName, color)
+        val selected = requestedName ?: "main"
         return compile(source, sourceName, color, parameters, selected, cellLibrary).single()
     }
 

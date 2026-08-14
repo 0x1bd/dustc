@@ -1,4 +1,4 @@
-module mux8(
+module main(
     input control {
         select: bit,
     },

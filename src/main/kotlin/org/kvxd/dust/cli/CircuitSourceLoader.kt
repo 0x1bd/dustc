@@ -3,7 +3,6 @@ package org.kvxd.dust.cli
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.extension
-import kotlin.io.path.nameWithoutExtension
 import org.kvxd.dust.Circuit
 import org.kvxd.dust.lang.DustLanguage
 
@@ -19,7 +18,6 @@ class CircuitSourceLoader {
             Files.readString(source),
             source.toString(),
             requestedName = requestedName,
-            preferredName = source.nameWithoutExtension,
             parameters = parameters,
             color = System.console() != null,
         )

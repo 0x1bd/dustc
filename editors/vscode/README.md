@@ -17,6 +17,12 @@ On any other platform, build the compiler yourself and point `dust.compilerPath`
 When `dust.compilerPath` is empty the extension resolves, in order: the downloaded binary, a
 `dustc` executable in a workspace folder root, then `dustc` on `PATH`.
 
+## Building
+
+Name the schematic's top-level module `main`, then click **Build Schematic** in the editor title bar or run
+**Dust: Build Schematic** from the command palette. The extension writes the `.schem` next to the active `.dust` file.
+Legacy sources can select a differently named top-level module with `--module` in `dust.buildArguments`.
+
 ## Settings
 
 | Setting                   | Default       | Meaning                                           |

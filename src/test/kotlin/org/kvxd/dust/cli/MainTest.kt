@@ -46,7 +46,7 @@ class MainTest {
         try {
             Files.writeString(
                 source,
-                "module parameterized<const WIDTH: int = 1>(" +
+                "module main<const WIDTH: int = 1>(" +
                     "input a: bits<WIDTH>, output y: bits<WIDTH>) { y = ~a }",
             )
             val output = StringWriter()

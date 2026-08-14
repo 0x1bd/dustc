@@ -6,7 +6,7 @@ Minecraft redstone.
 ## A first module
 
 ```dust
-module inverter(
+module main(
     input controls {
         a: bit,
     },
@@ -18,7 +18,9 @@ module inverter(
 }
 ```
 
-Every module has a name, a list of inputs and outputs, and a body. A file may contain multiple modules.
+Every module has a name, a list of inputs and outputs, and a body. A file may contain multiple modules. When building a
+schematic, `dustc` uses the module named `main` as the top level. The `--module <name>` option can build older sources
+whose top-level module has another name.
 
 Module, port, and I/O-group names use lower-case letters, digits, and `_`, and must start with a letter.
 
@@ -633,10 +635,10 @@ Block comments use `/* ... */`:
 
 Block comments may be nested.
 
-## Complete example
+## Complete buildable example
 
 ```dust
-module adder4(
+module main(
     #[panel]
     input operands {
         a: bits<4>,

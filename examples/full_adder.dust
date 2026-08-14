@@ -8,7 +8,7 @@ module half_adder(
     carry = a & b
 }
 
-module full_adder(
+module main(
     input operands {
         a: bit,
         b: bit,

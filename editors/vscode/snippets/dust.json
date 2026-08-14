@@ -3,7 +3,7 @@
     "prefix": "module",
     "description": "Declare a module with one input and one output group",
     "body": [
-      "module ${1:name}(",
+      "module ${1:main}(",
       "\tinput ${2:operands} {",
       "\t\t${3:a}: ${4|bit,bits<4>,bits<8>|},",
       "\t},",
@@ -24,7 +24,7 @@
     "prefix": "moduleconst",
     "description": "Declare a module with a compile-time integer parameter",
     "body": [
-      "module ${1:name}<const ${2:WIDTH}: int = ${3:8}>(",
+      "module ${1:main}<const ${2:WIDTH}: int = ${3:8}>(",
       "\tinput ${4:a}: bits<${2:WIDTH}>,",
       "\toutput ${5:y}: bits<${2:WIDTH}>,",
       ") {",

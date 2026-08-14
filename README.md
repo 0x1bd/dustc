@@ -109,7 +109,16 @@ By default, physical builds expose inputs as levers and outputs as lamps. For ra
 dustc build examples/adder4.dust -o adder4.schem --terminals
 ```
 
-If a source file contains several modules, choose the top-level module explicitly:
+The top-level module is named `main`. This lets editor integrations such as **Dust: Build Schematic** build the active
+file without asking which module to use:
+
+```dust
+module main(input a: bit, output y: bit) {
+    y = ~a
+}
+```
+
+A custom module can also be specified with `--module`:
 
 ```shell
 dustc build design.dust -o design.schem --module cpu
@@ -118,7 +127,7 @@ dustc build design.dust -o design.schem --module cpu
 Specialize top-level compile-time integer parameters by repeating `--param`:
 
 ```shell
-dustc build display.dust --module line_display --param WIDTH=13 --param HEIGHT=9 -o display.schem
+dustc build display.dust --param WIDTH=13 --param HEIGHT=9 -o display.schem
 ```
 
 For all CLI options:
@@ -190,7 +199,7 @@ This produces a `.vsix` that can be installed with the commands above.
 A small Dust module looks like this:
 
 ```dust
-module inverter(
+module main(
     input controls { a: bit },
     output result { y: bit },
 ) {

@@ -1,6 +1,6 @@
 // this uses the built-in ALU.
 
-module alu4(
+module main(
     #[panel]
     input operands {
         a: bits<4>,

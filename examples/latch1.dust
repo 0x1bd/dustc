@@ -1,4 +1,4 @@
-module latch1(
+module main(
     input control {
         hold: bit,
     },

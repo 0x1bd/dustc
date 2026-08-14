@@ -25,7 +25,11 @@ class BuildCommand : Callable<Int> {
     @Option(names = ["-o", "--output"], paramLabel = "<output.schem>", description = ["Schematic output path."])
     private var destination: Path? = null
 
-    @Option(names = ["--module"], paramLabel = "<name>", description = ["Module to build if the file declares several."])
+    @Option(
+        names = ["--module"],
+        paramLabel = "<name>",
+        description = ["Build a top-level module instead of main."],
+    )
     private var moduleName: String? = null
 
     @Option(
