@@ -5,7 +5,7 @@ g = glass
 + = dust
 
 pins:
-a input @0,3,0 abut=false south=true branch=1
+a input @0,3,0 abut=false south=true
 
 layers:
 @2

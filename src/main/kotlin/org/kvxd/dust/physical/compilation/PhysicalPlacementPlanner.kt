@@ -154,7 +154,9 @@ internal class PhysicalPlacementPlanner(
         return FloorplanSelection(final.plan, final.candidate, candidates.size)
     }
 
-    private fun compareFloorplans(): Comparator<Floorplan> = compareBy<Floorplan> { it.clockSkewTicks }
+    private fun compareFloorplans(): Comparator<Floorplan> = compareBy<Floorplan> { it.timingViolationCount }
+        .thenBy { it.timingDeficitTicks }
+        .thenBy { it.clockSkewTicks }
         .thenBy { it.selectionCost }
         .thenBy { it.routingBlocks }
         .thenBy { it.maximumDimension }

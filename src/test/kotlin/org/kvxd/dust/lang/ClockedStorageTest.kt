@@ -179,7 +179,7 @@ class ClockedStorageTest {
         ).single()
         val design = circuit.compile().physical
         val dffCell = design.cells.single { it.cell.name == "dff" }.cell
-        assertEquals(CellSize(12, 2, 6), dffCell.size)
+        assertEquals(CellSize(11, 2, 6), dffCell.size)
         assertEquals(1, dffCell.blocks.count { it.second.type.component == ComponentKind.COMPARATOR })
         assertEquals(3, dffCell.blocks.count { it.second.type.component == ComponentKind.REPEATER })
         val simulator = GateLevelSimulator(design.matrix)

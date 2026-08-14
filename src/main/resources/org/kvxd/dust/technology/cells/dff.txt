@@ -3,7 +3,7 @@ cell dff
 pins:
 clock input @0,1,5 abut=false required=15
 d input @5,1,5 required=5
-q output @11,1,5 drive=14
+q output @10,1,5 drive=15
 
 observations:
 edge-pulse @5,1,2
@@ -40,9 +40,7 @@ for x in 5..9 {
     wire dust @(x),1,5
 }
 wire repeater-east @9,1,5
-for x in 10..12 {
-    wire dust @(x),1,5
-}
+wire dust @10,1,5
 
 timing:
 arc clock -> q rise=4 fall=4

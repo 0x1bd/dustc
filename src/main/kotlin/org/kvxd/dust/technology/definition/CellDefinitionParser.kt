@@ -238,7 +238,7 @@ internal object CellDefinitionParser {
         val parts = splitWords(line.text)
         if (parts.size < 3) line.location.error("invalid pin '${line.text}'")
         val options = options(parts.drop(3), line)
-        val known = setOf("abut", "south", "branch", "drive", "required")
+        val known = setOf("abut", "south", "drive", "required")
         if (options.keys.any { it !in known }) line.location.error("unknown pin option in '${line.text}'")
         return CellPinDefinition(
             name = indexedName(parts[0], line),
@@ -247,7 +247,6 @@ internal object CellDefinitionParser {
             position = position(parts[2], line),
             allowsHorizontalAbutment = booleanOption(options, "abut", true, line),
             accessesFromSouth = booleanOption(options, "south", false, line),
-            branchOffsetX = integerOption(options, "branch", 0, line),
             driveStrength = integerOption(options, "drive", 15, line),
             requiredStrength = integerOption(options, "required", 1, line),
         )

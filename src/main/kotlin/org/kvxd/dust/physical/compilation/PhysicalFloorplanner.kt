@@ -10,6 +10,7 @@ import org.kvxd.dust.physical.design.PlacedCell
 import org.kvxd.dust.physical.compilation.model.*
 import org.kvxd.dust.technology.PinDirection
 import org.kvxd.dust.technology.RedstoneTechnology
+import org.kvxd.dust.timing.StaticTiming
 
 internal class PhysicalFloorplanner(
     private val technology: RedstoneTechnology,
@@ -59,7 +60,7 @@ internal class PhysicalFloorplanner(
             cell.cell.pins.flatMap { pin ->
                 buildList {
                     add(cell.origin.x + pin.position.x)
-                    if (pin.branchOffsetX != 0) add(cell.origin.x + pin.position.x + pin.branchOffsetX)
+                    if (pin.accessesFromSouth) add(cell.origin.x + pin.position.x + 1)
                 }
             }
         }
@@ -314,6 +315,16 @@ internal class PhysicalFloorplanner(
             }
             (arrivals.maxOrNull() ?: 0) - (arrivals.minOrNull() ?: 0)
         } ?: 0
+        val timing = if (netlist.instances.any { it.type.behavior is CellBehavior.Stateful }) {
+            StaticTiming.analyse(
+                netlist,
+                cells,
+                balancedClockDelays(cells, routeDelays),
+                includePrimaryIoPaths = false,
+            )
+        } else {
+            null
+        }
         return Floorplan(
             rows,
             cells,
@@ -326,6 +337,7 @@ internal class PhysicalFloorplanner(
             routing.blocks,
             tierCount,
             clockSkew,
+            timing,
         )
     }
 
@@ -531,7 +543,6 @@ internal class PhysicalFloorplanner(
         position,
         pin.allowsHorizontalAbutment,
         if (pin.accessesFromSouth) ViaSense.UP else ViaSense.DOWN,
-        pin.branchOffsetX,
         pin.driveStrength,
         pin.requiredStrength,
     )

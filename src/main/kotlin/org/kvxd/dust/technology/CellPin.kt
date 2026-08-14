@@ -13,7 +13,6 @@ data class CellPin(
 
     val accessesFromSouth: Boolean = false,
 
-    val branchOffsetX: Int = 0,
     val driveStrength: Int = 15,
     val requiredStrength: Int = 1,
 )

@@ -375,8 +375,7 @@ internal class PhysicalRouter(
                 sink,
                 source.position,
                 accessZ,
-                source.sense,
-                source.branchOffsetX,
+                source.sense == ViaSense.UP,
                 Direction.SOUTH,
                 signal,
                 technology.signalStrength - source.driveStrength + 1,
@@ -432,18 +431,17 @@ internal class PhysicalRouter(
                     false,
                     viaPolicy,
                 ).last().z
+                val needsUpperDetour = endpoint.sense == ViaSense.UP && !usesGlassTower(
+                    laneY,
+                    endpoint.position.y,
+                    ViaFlow.UPWARD,
+                    viaPolicy,
+                )
                 routeUpperBranch(
                     sink,
                     endpoint.position,
                     accessZ,
-                    endpoint.sense,
-                    if (usesGlassTower(
-                            laneY,
-                            endpoint.position.y,
-                            ViaFlow.UPWARD,
-                            viaPolicy
-                        )
-                    ) 0 else endpoint.branchOffsetX,
+                    needsUpperDetour,
                     Direction.NORTH,
                     signal,
                     laneDecay + descent,
@@ -484,8 +482,7 @@ internal class PhysicalRouter(
         sink: RouteSink,
         pin: BlockPos,
         accessZ: Int,
-        sense: ViaSense,
-        branchOffsetX: Int,
+        needsUpperDetour: Boolean,
         travel: Direction,
         signal: Signal,
         initialDecay: Int,
@@ -495,12 +492,11 @@ internal class PhysicalRouter(
     ): Carried {
         val outsideZ = pin.z + 1
         val descending = travel == Direction.SOUTH
-        if (sense == ViaSense.UP && branchOffsetX != 0) {
+        if (needsUpperDetour) {
             return routeUpperDetour(
                 sink,
                 pin,
                 accessZ,
-                branchOffsetX,
                 travel,
                 signal,
                 initialDecay,
@@ -548,15 +544,13 @@ internal class PhysicalRouter(
         sink: RouteSink,
         pin: BlockPos,
         accessZ: Int,
-        branchOffsetX: Int,
         travel: Direction,
         signal: Signal,
         initialDecay: Int,
         requiredStrength: Int,
     ): Carried {
         require(travel == Direction.NORTH) { "a south-rising source endpoint is unsupported" }
-        require(kotlin.math.abs(branchOffsetX) == 1) { "upper-plane detour must be one column" }
-        val detourX = pin.x + branchOffsetX
+        val detourX = pin.x + 1
         val outsideZ = pin.z + 1
         require(accessZ > outsideZ + 1) { "upper-plane access at Z=$accessZ cannot clear pin $pin" }
         val returnZ = accessZ - 2
@@ -623,7 +617,9 @@ internal class PhysicalRouter(
         flow: ViaFlow,
         viaPolicy: ViaPolicy,
     ): Int = endpointViaDescent(endpoint, laneY, flow, viaPolicy) +
-            if (endpoint is Endpoint.Cell) kotlin.math.abs(endpoint.branchOffsetX) else 0
+            if (endpoint is Endpoint.Cell && endpoint.sense == ViaSense.UP &&
+                !usesGlassTower(laneY, endpoint.position.y, flow, viaPolicy)
+            ) 1 else 0
 
     private fun placeVia(
         sink: RouteSink,

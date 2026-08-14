@@ -4,6 +4,8 @@ import org.kvxd.dust.cell.behavior.CellBehavior
 import org.kvxd.dust.cell.definition.PortDirection
 import org.kvxd.dust.cell.timing.TimingArc
 import org.kvxd.dust.cell.timing.TimingConstraint
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.netlist.BooleanNetlist
 import org.kvxd.dust.netlist.CellInstance
 import org.kvxd.dust.netlist.Signal
 import org.kvxd.dust.physical.design.PhysicalDesign
@@ -14,22 +16,37 @@ object StaticTiming {
         design: PhysicalDesign,
         clockPeriodTicks: Int? = null,
         maximumClockSkewTicks: Int = 1,
+    ): TimingReport = analyse(
+        design.netlist,
+        design.cells,
+        design.routeDelayTicks,
+        clockPeriodTicks,
+        maximumClockSkewTicks,
+    )
+
+    internal fun analyse(
+        netlist: BooleanNetlist,
+        placedCells: List<PlacedCell>,
+        routeDelayTicks: Map<BlockPos, Int>,
+        clockPeriodTicks: Int? = null,
+        maximumClockSkewTicks: Int = 1,
+        includePrimaryIoPaths: Boolean = true,
     ): TimingReport {
         require(clockPeriodTicks == null || clockPeriodTicks > 0)
         require(maximumClockSkewTicks >= 0)
-        val cells = design.cells.associateBy { it.name }
-        val sequential = edgeTriggered(design)
-        val generatedClockPeriod = generatedClockPeriod(design, cells)
+        val cells = placedCells.associateBy { it.name }
+        val sequential = edgeTriggered(netlist)
+        val generatedClockPeriod = generatedClockPeriod(netlist, cells)
         val effectiveClockPeriod = clockPeriodTicks ?: generatedClockPeriod
         val clockArrivals = sequential.associateWith { instance ->
             val trigger = edgeTrigger(instance)
-            portRouteDelay(design, cells.getValue(instance.name), trigger.clockPort)
+            portRouteDelay(routeDelayTicks, cells.getValue(instance.name), trigger.clockPort)
         }
 
         var criticalPath = 0
-        design.netlist.inputs.values.forEach { input ->
-            val walk = propagateCombinational(design, cells, input)
-            design.netlist.outputs.values.forEach { output ->
+        if (includePrimaryIoPaths) netlist.inputs.values.forEach { input ->
+            val walk = propagateCombinational(netlist, routeDelayTicks, cells, input)
+            netlist.outputs.values.forEach { output ->
                 if (walk.reached[output.index]) criticalPath = maxOf(criticalPath, walk.latest[output.index])
             }
         }
@@ -53,7 +70,8 @@ object StaticTiming {
                     if (clockToQ.isEmpty()) return@outputBits
                     val output = launch.connections.getValue(outputPort.name)[outputBit]
                     val walk = propagateCombinational(
-                        design,
+                        netlist,
+                        routeDelayTicks,
                         cells,
                         output,
                         clockToQ.minOf { it.minDelay },
@@ -66,7 +84,7 @@ object StaticTiming {
                             .filter { it.clockEdge == edgeTrigger(capture).edge }
                             .forEach constraintLoop@{ constraint ->
                                 val earliestData = portArrival(
-                                    design,
+                                    routeDelayTicks,
                                     walk,
                                     capture,
                                     captureCell,
@@ -74,7 +92,7 @@ object StaticTiming {
                                     earliest = true,
                                 ) ?: return@constraintLoop
                                 val latestData = portArrival(
-                                    design,
+                                    routeDelayTicks,
                                     walk,
                                     capture,
                                     captureCell,
@@ -117,16 +135,17 @@ object StaticTiming {
             }
         }
 
-        design.netlist.inputs.forEach { (inputName, inputSignal) ->
-            val walk = propagateCombinational(design, cells, inputSignal)
-            design.netlist.instances.filter { instance ->
-                (instance.type.behavior as? CellBehavior.Stateful)?.trigger == CellBehavior.Trigger.Transparent
-            }.forEach latchLoop@{ latch ->
+        val transparentLatches = netlist.instances.filter { instance ->
+            (instance.type.behavior as? CellBehavior.Stateful)?.trigger == CellBehavior.Trigger.Transparent
+        }
+        if (transparentLatches.isNotEmpty()) netlist.inputs.forEach { (inputName, inputSignal) ->
+            val walk = propagateCombinational(netlist, routeDelayTicks, cells, inputSignal)
+            transparentLatches.forEach latchLoop@{ latch ->
                 val cell = cells[latch.name] ?: return@latchLoop
                 cell.cell.timing.constraints.filterIsInstance<TimingConstraint.SetupHold>().forEach constraintLoop@{ constraint ->
-                    val data = portArrival(design, walk, latch, cell, constraint.dataPort, earliest = true)
+                    val data = portArrival(routeDelayTicks, walk, latch, cell, constraint.dataPort, earliest = true)
                         ?: return@constraintLoop
-                    val clock = portArrival(design, walk, latch, cell, constraint.clockPort, earliest = false)
+                    val clock = portArrival(routeDelayTicks, walk, latch, cell, constraint.clockPort, earliest = false)
                         ?: return@constraintLoop
                     val slack = data - (clock + constraint.holdTicks)
                     worstHoldSlack = minOf(worstHoldSlack, slack)
@@ -149,7 +168,7 @@ object StaticTiming {
             largestSkew = maxOf(largestSkew, skew)
             if (skew > maximumClockSkewTicks) {
                 skewViolations += ClockSkewViolation(
-                    clockName(design, clock),
+                    clockName(netlist, clock),
                     earliest.first.name,
                     latest.first.name,
                     earliest.second,
@@ -173,7 +192,7 @@ object StaticTiming {
         )
     }
 
-    private fun edgeTriggered(design: PhysicalDesign): List<CellInstance> = design.netlist.instances.filter { instance ->
+    private fun edgeTriggered(netlist: BooleanNetlist): List<CellInstance> = netlist.instances.filter { instance ->
         (instance.type.behavior as? CellBehavior.Stateful)?.trigger is CellBehavior.Trigger.EdgeTriggered
     }
 
@@ -181,18 +200,19 @@ object StaticTiming {
         ((instance.type.behavior as CellBehavior.Stateful).trigger as CellBehavior.Trigger.EdgeTriggered)
 
     private fun propagateCombinational(
-        design: PhysicalDesign,
+        netlist: BooleanNetlist,
+        routeDelayTicks: Map<BlockPos, Int>,
         cells: Map<String, PlacedCell>,
         from: Signal,
         initialEarliest: Int = 0,
         initialLatest: Int = 0,
     ): Walk {
-        val walk = Walk(design.netlist.signals)
+        val walk = Walk(netlist.signals)
         walk.reached[from.index] = true
         walk.earliest[from.index] = initialEarliest
         walk.latest[from.index] = initialLatest
 
-        design.netlist.combinationalOrder().forEach { instance ->
+        netlist.combinationalOrder().forEach { instance ->
             val cell = cells[instance.name] ?: return@forEach
             instance.type.ports.filter { it.direction == PortDirection.OUTPUT }.forEach { outputPort ->
                 repeat(outputPort.width) outputBits@{ outputBit ->
@@ -208,7 +228,7 @@ object StaticTiming {
                             val inputSignal = instance.connections.getValue(inputPort.name)[inputBit]
                             if (!walk.reached[inputSignal.index]) return@forEach
                             val pin = physicalPin(cell, inputPort.name, inputBit)
-                            val wire = design.routeDelayTicks[cell.pin(pin)] ?: 0
+                            val wire = routeDelayTicks[cell.pin(pin)] ?: 0
                             earliest = minOf(earliest, walk.earliest[inputSignal.index] + wire + arc.minDelay)
                             latest = maxOf(latest, walk.latest[inputSignal.index] + wire + arc.maxDelay)
                         }
@@ -227,7 +247,7 @@ object StaticTiming {
     private val TimingArc.maxDelay: Int get() = maxOf(rise.maxTicks, fall.maxTicks)
 
     private fun portArrival(
-        design: PhysicalDesign,
+        routeDelayTicks: Map<BlockPos, Int>,
         walk: Walk,
         instance: CellInstance,
         cell: PlacedCell,
@@ -237,24 +257,24 @@ object StaticTiming {
         val arrivals = instance.connections.getValue(port).mapIndexedNotNull { bit, signal ->
             if (!walk.reached[signal.index]) return@mapIndexedNotNull null
             val pin = physicalPin(cell, port, bit)
-            val wire = design.routeDelayTicks[cell.pin(pin)] ?: 0
+            val wire = routeDelayTicks[cell.pin(pin)] ?: 0
             (if (earliest) walk.earliest[signal.index] else walk.latest[signal.index]) + wire
         }
         return if (earliest) arrivals.minOrNull() else arrivals.maxOrNull()
     }
 
-    private fun portRouteDelay(design: PhysicalDesign, cell: PlacedCell, port: String): Int =
-        cell.cell.pins.filter { it.port == port }.maxOf { pin -> design.routeDelayTicks[cell.pin(pin.name)] ?: 0 }
+    private fun portRouteDelay(routeDelayTicks: Map<BlockPos, Int>, cell: PlacedCell, port: String): Int =
+        cell.cell.pins.filter { it.port == port }.maxOf { pin -> routeDelayTicks[cell.pin(pin.name)] ?: 0 }
 
     private fun physicalPin(cell: PlacedCell, port: String, bit: Int): String =
         cell.cell.pins.single { it.port == port && it.bit == bit }.name
 
-    private fun clockName(design: PhysicalDesign, signal: Signal): String =
-        design.netlist.inputs.entries.singleOrNull { it.value == signal }?.key ?: "signal-${signal.index}"
+    private fun clockName(netlist: BooleanNetlist, signal: Signal): String =
+        netlist.inputs.entries.singleOrNull { it.value == signal }?.key ?: "signal-${signal.index}"
 
-    private fun generatedClockPeriod(design: PhysicalDesign, cells: Map<String, PlacedCell>): Int? {
-        val periods = design.netlist.clockSignals.mapNotNull { clock ->
-            design.netlist.instances.firstNotNullOfOrNull { instance ->
+    private fun generatedClockPeriod(netlist: BooleanNetlist, cells: Map<String, PlacedCell>): Int? {
+        val periods = netlist.clockSignals.mapNotNull { clock ->
+            netlist.instances.firstNotNullOfOrNull { instance ->
                 val drivesClock = instance.type.ports.filter { it.direction == PortDirection.OUTPUT }.any { port ->
                     instance.connections.getValue(port.name).any { it == clock }
                 }

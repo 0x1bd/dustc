@@ -97,7 +97,6 @@ internal class StandardCellFactory(
                 pin.position,
                 allowsHorizontalAbutment = pin.allowsHorizontalAbutment,
                 accessesFromSouth = pin.accessesFromSouth,
-                branchOffsetX = pin.branchOffsetX,
                 driveStrength = pin.driveStrength,
                 requiredStrength = pin.requiredStrength,
             )

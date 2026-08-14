@@ -9,7 +9,6 @@ internal data class CellPinDefinition(
     val position: BlockPos,
     val allowsHorizontalAbutment: Boolean,
     val accessesFromSouth: Boolean,
-    val branchOffsetX: Int,
     val driveStrength: Int,
     val requiredStrength: Int,
 )

@@ -32,7 +32,6 @@ internal object CellDefinitionValidator {
             require(pin.position.x >= 0 && pin.position.y >= 0 && pin.position.z >= 0) {
                 "${definition.name} pin ${pin.name} has a negative position"
             }
-            require(pin.branchOffsetX >= 0) { "${definition.name} pin ${pin.name} has a negative branch offset" }
             require(pin.driveStrength > 0 && pin.requiredStrength > 0) {
                 "${definition.name} pin ${pin.name} has a non-positive signal strength"
             }
