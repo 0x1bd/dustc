@@ -167,6 +167,16 @@ let mut value = a
 value[2] = b
 ```
 
+`let rec` predeclares a register result so its next-state expression can read the current state:
+
+```dust
+let rec count = resettable_register<8>(increment<8>(count).result, clear, clock)
+```
+
+Recursive bindings must be initialized directly by `dff`, `register`, `enabled_register`, or `resettable_register`.
+Bus registers require an explicit width parameter because the binding's width must be known before its initializer is
+elaborated.
+
 ## Outputs
 
 Assign outputs directly:
@@ -345,6 +355,9 @@ front of ordinary DFFs.
 Physical compilation reports `minimumSafeStepTicks`/`minimumClockPeriodTicks`, hold slack, and maximum clock skew.
 Supplying an explicit clock period through the compiler API makes setup, hold, or skew violations reject the build.
 Externally stepped builds always reject hold violations and report their minimum safe interval.
+
+The generic externally stepped Bresenham controller in `examples/bresenham.dust` demonstrates a larger packed-state
+machine built with `let rec`. All line-drawing behavior is ordinary Dust module logic rather than a compiler intrinsic.
 
 ## Calling modules
 

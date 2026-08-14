@@ -152,10 +152,12 @@ internal class Parser(
 
     private fun parseVariable(attributes: List<AttributeSyntax>): VariableSyntax {
         val location = advance()
+        val recursive = match(TokenType.REC)
         val mutable = match(TokenType.MUT)
+        if (recursive && mutable) error("a recursive binding cannot be mutable")
         val name = consumeIdentifier("expected a signal name")
         consume(TokenType.EQ, "a local signal needs an initializer")
-        return VariableSyntax(name, mutable, parseExpression(), attributes, location)
+        return VariableSyntax(name, mutable, recursive, parseExpression(), attributes, location)
     }
 
     private fun parseFor(): ForSyntax {

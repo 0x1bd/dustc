@@ -47,6 +47,11 @@
     "description": "Rebindable elaboration value",
     "body": ["let mut ${1:carry} = ${2:cin}"]
   },
+  "Recursive register binding": {
+    "prefix": "letrec",
+    "description": "Declare registered state with legal next-state feedback",
+    "body": ["let rec ${1:state} = resettable_register<${2:8}>(${3:next_state}, ${4:reset}, ${5:clock})"]
+  },
   "Multiplexer": {
     "prefix": "mux",
     "description": "Equal-width multiplexer",

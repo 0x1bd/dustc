@@ -201,7 +201,11 @@ internal class Elaborator(
                     if (statement.mutable && statement.attributes.isNotEmpty()) {
                         fail(statement.location, "placement attributes cannot be attached to a mutable binding")
                     }
-                    val value = evaluate(statement.initializer, environment, outputs, builder, callStack)
+                    val value = if (statement.recursive) {
+                        recursiveBinding(statement, environment, outputs, builder, callStack)
+                    } else {
+                        evaluate(statement.initializer, environment, outputs, builder, callStack)
+                    }
                     if (statement.attributes.isNotEmpty()) {
                         val placement = placementAttributes(statement.attributes)
                         if (placement.edge != null) fail(
@@ -219,7 +223,9 @@ internal class Elaborator(
                         }
                         builder.place(placementSignals(value, statement.location), placement.tier, targets)
                     }
-                    environment.bindings[statement.name] = Binding(value, statement.mutable)
+                    if (!statement.recursive) {
+                        environment.bindings[statement.name] = Binding(value, statement.mutable)
+                    }
                 }
 
                 is AssignmentSyntax -> assign(statement, environment, outputs, builder, callStack)
@@ -250,6 +256,57 @@ internal class Elaborator(
                 }
             }
         }
+    }
+
+    private fun recursiveBinding(
+        statement: VariableSyntax,
+        environment: Environment,
+        outputs: Map<String, OutputBinding>,
+        builder: BooleanNetlistBuilder,
+        callStack: List<SpecializationKey>,
+    ): Value.Signals {
+        val call = statement.initializer as? CallSyntax
+            ?: fail(statement.location, "a recursive binding must be initialized by a register call")
+        val width = when (call.name) {
+            "dff" -> {
+                if (call.parameters.isNotEmpty()) fail(call.location, "dff does not accept parameters")
+                1
+            }
+
+            "register", "enabled_register", "resettable_register" -> {
+                if (call.parameters.size != 1) {
+                    fail(call.location, "a recursive ${call.name} binding needs an explicit width parameter")
+                }
+                integer(call.parameters.single(), environment, outputs, builder, callStack).also {
+                    if (it !in 1..ULong.SIZE_BITS) fail(call.parameters.single().location, "register width must be between 1 and ${ULong.SIZE_BITS}")
+                }
+            }
+
+            else -> fail(call.location, "a recursive binding must use dff or a register helper")
+        }
+        val state = Value.Signals(List(width) { builder.wire() })
+        environment.bindings[statement.name] = Binding(state, mutable = false)
+        val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
+        val expected = when (call.name) {
+            "dff", "register" -> 2
+            else -> 3
+        }
+        if (arguments.size != expected) fail(call.location, "${call.name} needs $expected arguments")
+        val data = signals(arguments[0], call.location)
+        if (data.size != width) fail(call.location, "${call.name} width $width does not match ${data.size}-bit data")
+        val controls = arguments.drop(1).map { value ->
+            signals(value, call.location).also { bits ->
+                if (bits.size != 1) fail(call.location, "${call.name} control inputs must be bits")
+            }.single()
+        }
+        state.signals.zip(data).forEach { (output, input) ->
+            when (call.name) {
+                "dff", "register" -> builder.dffInto(input, controls[0], output)
+                "enabled_register" -> builder.enabledDffInto(input, controls[0], controls[1], output)
+                else -> builder.resettableDffInto(input, controls[0], controls[1], output)
+            }
+        }
+        return state
     }
 
     private fun assign(

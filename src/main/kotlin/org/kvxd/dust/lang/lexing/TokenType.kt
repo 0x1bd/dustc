@@ -10,6 +10,7 @@ internal enum class TokenType(val text: String = "") {
     INPUT("input"),
     OUTPUT("output"),
     LET("let"),
+    REC("rec"),
     MUT("mut"),
     FOR("for"),
     IN("in"),

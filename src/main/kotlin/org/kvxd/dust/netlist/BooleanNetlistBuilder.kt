@@ -49,16 +49,29 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
 
     fun dff(data: Signal, clock: Signal): Signal = gate(Primitive.DFF, data, clock)
 
+    fun dffInto(data: Signal, clock: Signal, output: Signal) =
+        gateInto(Primitive.DFF, listOf(data, clock), output)
+
     fun enabledDff(data: Signal, enable: Signal, clock: Signal): Signal {
         val output = wire()
-        val selected = mux(enable, output, data)
-        gateInto(Primitive.DFF, listOf(selected, clock), output)
+        enabledDffInto(data, enable, clock, output)
         return output
     }
 
+    fun enabledDffInto(data: Signal, enable: Signal, clock: Signal, output: Signal) {
+        val selected = mux(enable, output, data)
+        dffInto(selected, clock, output)
+    }
+
     fun resettableDff(data: Signal, reset: Signal, clock: Signal): Signal {
+        val output = wire()
+        resettableDffInto(data, reset, clock, output)
+        return output
+    }
+
+    fun resettableDffInto(data: Signal, reset: Signal, clock: Signal, output: Signal) {
         val selected = mux(reset, data, constant(false))
-        return dff(selected, clock)
+        dffInto(selected, clock, output)
     }
 
     fun mux(select: Signal, whenFalse: Signal, whenTrue: Signal): Signal =

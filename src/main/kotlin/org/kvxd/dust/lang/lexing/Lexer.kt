@@ -154,6 +154,7 @@ internal class Lexer(private val reporter: DiagnosticReporter, private val sourc
             "input" to TokenType.INPUT,
             "output" to TokenType.OUTPUT,
             "let" to TokenType.LET,
+            "rec" to TokenType.REC,
             "mut" to TokenType.MUT,
             "for" to TokenType.FOR,
             "in" to TokenType.IN,

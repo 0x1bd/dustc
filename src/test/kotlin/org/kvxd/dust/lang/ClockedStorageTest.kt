@@ -2,6 +2,7 @@ package org.kvxd.dust.lang
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.kvxd.dust.compile
 import org.kvxd.dust.device.block.ComponentKind
@@ -10,6 +11,46 @@ import org.kvxd.dust.netlist.booleanNetlist
 import org.kvxd.dust.sim.GateLevelSimulator
 
 class ClockedStorageTest {
+    @Test
+    fun `recursive register bindings expose legal next-state feedback`() {
+        val circuit = DustLanguage.compile(
+            """
+            module counter(input clock: bit, input clear: bit, output value: bits<3>) {
+                let rec state = resettable_register<3>(increment<3>(state).result, clear, clock)
+                value = state
+            }
+            """.trimIndent(),
+            "counter.dust",
+        ).single()
+        val simulator = SequentialSimulator(circuit.lowerToBooleanNetlist())
+
+        fun step(clock: Boolean, clear: Boolean = false): Int {
+            val outputs = simulator.step(mapOf("clock" to clock, "clear" to clear))
+            return (0 until 3).fold(0) { value, bit ->
+                if (outputs.getValue("value[$bit]")) value or (1 shl bit) else value
+            }
+        }
+
+        assertEquals(0, step(false))
+        assertEquals(1, step(true))
+        assertEquals(1, step(false))
+        assertEquals(2, step(true))
+        assertEquals(2, step(false, clear = true))
+        assertEquals(0, step(true, clear = true))
+    }
+
+    @Test
+    fun `recursive bindings require an explicit storage boundary`() {
+        val error = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module invalid(input a: bit, output y: bit) { let rec loop = ~loop y = loop }",
+                "invalid-recursion.dust",
+            )
+        }
+
+        assertTrue("must be initialized by a register call" in error.message.orEmpty())
+    }
+
     @Test
     fun `DFF captures only on a rising edge`() {
         val circuit = DustLanguage.compile(
