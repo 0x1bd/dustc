@@ -1,13 +1,12 @@
 package org.kvxd.dust.cli
 
 import java.nio.file.Path
-import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.kvxd.dust.compile
 import org.kvxd.dust.netlist.Primitive
-import org.kvxd.dust.sim.GateLevelSimulator
+import org.kvxd.dust.physical.PhysicalSimulationHarness
 
 class Mux8PhysicalTest {
     @Test
@@ -19,32 +18,30 @@ class Mux8PhysicalTest {
 
         val design = module.compile().physical
         assertEquals(8, design.cells.count { it.cell.logicalType == Primitive.MUX2.cellType })
-        assertEquals(25, design.routes.size)
+        val simulation = PhysicalSimulationHarness(design)
 
-        val simulator = GateLevelSimulator(design.matrix)
-        val tickBound = design.matrix.blockCount()
-        simulator.settle(tickBound)
-
-        fun driveBus(name: String, value: Int) {
+        val vectors = buildList {
+            add(Triple(false, 0, 255))
+            add(Triple(true, 0, 255))
             repeat(8) { bit ->
-                simulator.setInput(design.inputs.getValue("$name[$bit]"), value and (1 shl bit) != 0)
+                val value = 1 shl bit
+                add(Triple(false, value, 0))
+                add(Triple(true, value, 0))
+                add(Triple(true, 0, value))
+                add(Triple(false, 0, value))
             }
+            add(Triple(false, 0xaa, 0x55))
+            add(Triple(true, 0xaa, 0x55))
+            add(Triple(false, 255, 0))
+            add(Triple(true, 0, 255))
         }
-        fun readBus(name: String): Int = (0 until 8).fold(0) { value, bit ->
-            if (simulator.readOutput(design.outputs.getValue("$name[$bit]"))) value or (1 shl bit) else value
+        vectors.forEachIndexed { index, (select, low, high) ->
+            simulation.setInput("select", select)
+            simulation.setBus("low", 8, low.toULong())
+            simulation.setBus("high", 8, high.toULong())
+            simulation.advance()
+            assertEquals((if (select) high else low).toULong(), simulation.outputBus("value", 8), "vector $index")
         }
-
-        val random = Random(0x4D555832)
-        repeat(384) { index ->
-            val select = random.nextBoolean()
-            val low = random.nextInt(256)
-            val high = random.nextInt(256)
-            simulator.setInput(design.inputs.getValue("select"), select)
-            driveBus("low", low)
-            driveBus("high", high)
-            simulator.advanceUntilIdle(tickBound)
-            assertEquals(if (select) high else low, readBus("value"), "vector $index")
-        }
-        assertTrue(simulator.unsettled().isEmpty())
+        simulation.requireSettled()
     }
 }

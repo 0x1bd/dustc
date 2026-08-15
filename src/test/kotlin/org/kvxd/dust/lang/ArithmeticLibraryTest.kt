@@ -1,7 +1,6 @@
 package org.kvxd.dust.lang
 
 import kotlin.math.abs
-import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -9,7 +8,7 @@ import kotlin.test.assertTrue
 import org.kvxd.dust.Circuit
 import org.kvxd.dust.CircuitResult
 import org.kvxd.dust.compile
-import org.kvxd.dust.sim.GateLevelSimulator
+import org.kvxd.dust.physical.PhysicalSimulationHarness
 
 class ArithmeticLibraryTest {
     @Test
@@ -95,47 +94,35 @@ class ArithmeticLibraryTest {
             "arithmetic-physical.dust",
         ).single()
         val design = circuit.compile().physical
-        val simulator = GateLevelSimulator(design.matrix)
-        val tickBound = design.matrix.blockCount()
-        simulator.settle(tickBound)
-
-        fun driveBus(name: String, value: Int) {
-            repeat(3) { bit ->
-                simulator.setInput(design.inputs.getValue("$name[$bit]"), value and (1 shl bit) != 0)
-            }
-        }
-
-        fun readBus(name: String): ULong = (0 until 3).fold(0uL) { value, bit ->
-            if (simulator.readOutput(design.outputs.getValue("$name[$bit]"))) value or (1uL shl bit) else value
-        }
+        val simulation = PhysicalSimulationHarness(design)
 
         val vectors = buildList {
             for (a in 0..7) for (b in 0..7) for (carry in 0..1) add(Triple(a, b, carry))
-        }.shuffled(Random(0x41524954))
+        }
         vectors.forEachIndexed { index, (a, b, carry) ->
-            driveBus("a", a)
-            driveBus("b", b)
-            simulator.setInput(design.inputs.getValue("carry_in"), carry != 0)
-            simulator.advanceUntilIdle(tickBound)
+            simulation.setBus("a", 3, a.toULong())
+            simulation.setBus("b", 3, b.toULong())
+            simulation.setInput("carry_in", carry != 0)
+            simulation.advance()
 
             val expected = circuit.evaluate(
                 "a" to a.toULong(),
                 "b" to b.toULong(),
                 "carry_in" to carry.toULong(),
             )
-            assertEquals(expected["sum"], readBus("sum"), "vector $index: a=$a b=$b carry=$carry")
+            assertEquals(expected["sum"], simulation.outputBus("sum", 3), "vector $index: a=$a b=$b carry=$carry")
             assertEquals(
                 expected.bit("carry_out"),
-                simulator.readOutput(design.outputs.getValue("carry_out")),
+                simulation.output("carry_out"),
                 "vector $index: carry",
             )
             assertEquals(
                 expected.bit("less"),
-                simulator.readOutput(design.outputs.getValue("less")),
+                simulation.output("less"),
                 "vector $index: comparison",
             )
         }
-        assertTrue(simulator.unsettled().isEmpty())
+        simulation.requireSettled()
     }
 
     private fun suite(width: Int): Circuit = DustLanguage.compile(
