@@ -1,4 +1,4 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.display
 
 import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.cell.library.CellLibrary

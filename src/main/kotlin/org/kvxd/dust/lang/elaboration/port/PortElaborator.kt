@@ -1,7 +1,13 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.port
 
 import org.kvxd.dust.CircuitPort
 import org.kvxd.dust.CircuitPortDirection
+import org.kvxd.dust.lang.elaboration.diagnostic.ElaborationDiagnostics
+import org.kvxd.dust.lang.elaboration.display.DisplayElaboration
+import org.kvxd.dust.lang.elaboration.model.ElaboratedValue
+import org.kvxd.dust.lang.elaboration.module.ResolvedPort
+import org.kvxd.dust.lang.elaboration.module.SpecializedModule
+import org.kvxd.dust.lang.elaboration.placement.PlacementElaborator
 import org.kvxd.dust.lang.lexing.Token
 import org.kvxd.dust.lang.syntax.PortDirection
 import org.kvxd.dust.netlist.BooleanNetlistBuilder

@@ -1,4 +1,4 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.placement
 
 import org.kvxd.dust.netlist.InterfaceEdge
 

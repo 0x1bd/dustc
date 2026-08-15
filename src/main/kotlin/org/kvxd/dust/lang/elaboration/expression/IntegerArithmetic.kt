@@ -1,4 +1,4 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.expression
 
 import org.kvxd.dust.lang.lexing.TokenType
 

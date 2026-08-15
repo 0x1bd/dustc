@@ -1,7 +1,10 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.module
 
 import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.lang.MAX_BUS_WIDTH
+import org.kvxd.dust.lang.elaboration.diagnostic.ElaborationDiagnostics
+import org.kvxd.dust.lang.elaboration.display.DisplayElaboration
+import org.kvxd.dust.lang.elaboration.expression.IntegerArithmetic
 import org.kvxd.dust.lang.lexing.Token
 import org.kvxd.dust.lang.lexing.TokenType
 import org.kvxd.dust.lang.syntax.BinarySyntax

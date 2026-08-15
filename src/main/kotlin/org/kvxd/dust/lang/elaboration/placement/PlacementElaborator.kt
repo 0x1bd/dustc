@@ -1,5 +1,7 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.placement
 
+import org.kvxd.dust.lang.elaboration.diagnostic.ElaborationDiagnostics
+import org.kvxd.dust.lang.elaboration.model.ElaboratedValue
 import org.kvxd.dust.lang.lexing.Token
 import org.kvxd.dust.lang.lexing.TokenType
 import org.kvxd.dust.lang.syntax.AttributeSyntax

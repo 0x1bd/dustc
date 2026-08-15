@@ -1,4 +1,4 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.module
 
 internal data class SpecializationKey(val module: String, val parameters: List<Int>) {
     override fun toString(): String =

@@ -1,4 +1,4 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.diagnostic
 
 import org.kvxd.dust.lang.diagnostic.DiagnosticReporter
 import org.kvxd.dust.lang.lexing.Token

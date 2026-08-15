@@ -1,4 +1,4 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.module
 
 import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.lang.syntax.PortSyntax

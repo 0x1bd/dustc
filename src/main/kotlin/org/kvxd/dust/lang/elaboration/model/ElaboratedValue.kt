@@ -1,5 +1,6 @@
-package org.kvxd.dust.lang.elaboration
+package org.kvxd.dust.lang.elaboration.model
 
+import org.kvxd.dust.lang.elaboration.display.DisplayElaboration
 import org.kvxd.dust.netlist.Signal
 
 internal sealed interface ElaboratedValue {
