@@ -109,13 +109,27 @@ module sm83_core_next(
     let return_taken = decoded.ret | decoded.reti | (decoded.ret_conditional & condition.taken)
     let stack_write_instruction = decoded.push | call_instruction | decoded.rst
     let stack_read_instruction = decoded.pop | return_instruction
+    let indirect_load = decoded.load_a_indirect | decoded.load_high_c
+    let indirect_store = decoded.store_a_indirect | decoded.store_high_c
+    let immediate8_load = decoded.load_high_immediate
+    let immediate8_store = decoded.store_high_immediate
+    let immediate16_load = decoded.load_a_absolute
+    let immediate16_store = decoded.store_a_absolute
+    let special_load = indirect_load | immediate8_load | immediate16_load
+    let special_store = indirect_store | immediate8_store | immediate16_store
+    let direct_memory_transfer = indirect_load | indirect_store
+    let addressed_memory_transfer = immediate8_load | immediate8_store |
+        immediate16_load | immediate16_store
+    let two_byte_write_instruction = stack_write_instruction | decoded.store_sp_absolute
     let direct_stack_instruction = decoded.push | decoded.pop | return_instruction | decoded.rst
-    let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump
-    let immediate16_instruction = decoded.load_immediate16 | absolute_jump | call_instruction
+    let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump |
+        immediate8_load | immediate8_store
+    let immediate16_instruction = decoded.load_immediate16 | absolute_jump | call_instruction |
+        immediate16_load | immediate16_store | decoded.store_sp_absolute
     let immediate_instruction = immediate8_instruction | immediate16_instruction
     let internal16_instruction = decoded.inc16 | decoded.dec16 | decoded.add_hl16
     let read_operand = immediate_instruction | memory_alu | memory_load | memory_increment | memory_decrement
-    let write_memory_direct = memory_store
+    let write_memory_direct = memory_store | direct_memory_transfer
     let direct_supported = direct_alu | direct_load | register_increment | register_decrement |
         decoded.halt | decoded.jump_hl
     let supported = direct_supported | read_operand | write_memory_direct | internal16_instruction |
@@ -124,6 +138,7 @@ module sm83_core_next(
     let operand_commit = phases[4] & (~(decoded.load_immediate8 & destination_is_memory)) &
         (~memory_increment) & (~memory_decrement)
     let memory_commit = phases[6] & memory_ready
+    let special_load_commit = memory_commit & special_load
     let active_alu = (direct_commit & decoded.alu8) | (operand_commit & (decoded.alu8 | decoded.alu_immediate8))
     let active_increment = (direct_commit & register_increment) | (operand_commit & memory_increment)
     let active_decrement = (direct_commit & register_decrement) | (operand_commit & memory_decrement)
@@ -134,18 +149,23 @@ module sm83_core_next(
     let decremented = sm83_dec8(target_value, flags[0])
     let register_load = (direct_commit & direct_load) |
         (operand_commit & (memory_load | (decoded.load_immediate8 & (~destination_is_memory))))
-    let register_write = register_load | (active_alu & alu.write_result) | active_increment | active_decrement
+    let register_write = register_load | (active_alu & alu.write_result) | active_increment | active_decrement |
+        special_load_commit
     let flags_write = active_alu | active_increment | active_decrement |
         (memory_commit & (memory_increment | memory_decrement))
-    let write_address = if active_alu { const_bits<3>(7) } else { decoded.destination }
+    let write_address = if active_alu | special_load_commit { const_bits<3>(7) } else { decoded.destination }
     let load_data = if phases[4] { operand } else { source.value }
-    let write_data = if active_alu {
-        alu.value
+    let write_data = if special_load_commit {
+        memory_data
     } else {
-        if active_increment {
-            incremented.result
+        if active_alu {
+        alu.value
         } else {
-            if active_decrement { decremented.result } else { load_data }
+            if active_increment {
+                incremented.result
+            } else {
+                if active_decrement { decremented.result } else { load_data }
+            }
         }
     }
     let write_flags = if active_alu {
@@ -175,6 +195,7 @@ module sm83_core_next(
     let mut hl_value = const_bits<16>(0)
     hl_value[0..8] = l
     hl_value[8..16] = h
+    let adjusted_hl = if instruction[4] { decrement<16>(hl_value).result } else { increment<16>(hl_value).result }
     let added_hl = sm83_add_hl16(hl_value, selected_pair.value, flags)
     let internal16_commit = phases[10]
     let pair_increment_commit = internal16_commit & decoded.inc16
@@ -185,14 +206,18 @@ module sm83_core_next(
     let relative_jump_commit = phases[10] & relative_jump_taken
     let absolute_jump_commit = phases[10] & absolute_jump_taken
     let jump_hl_commit = phases[1] & decoded.jump_hl
-    let first_stack_write_commit = phases[12] & memory_ready & stack_write_instruction
-    let second_stack_write_commit = phases[14] & memory_ready & stack_write_instruction
+    let first_two_byte_write_commit = phases[12] & memory_ready & two_byte_write_instruction
+    let second_two_byte_write_commit = phases[14] & memory_ready & two_byte_write_instruction
+    let first_stack_write_commit = first_two_byte_write_commit & stack_write_instruction
+    let second_stack_write_commit = second_two_byte_write_commit & stack_write_instruction
     let first_stack_read_commit = phases[11] & memory_ready & stack_read_instruction
     let second_stack_read_commit = phases[13] & memory_ready & stack_read_instruction
     let pop_commit = phases[15] & decoded.pop
     let return_commit = phases[15] & return_taken
     let call_commit = second_stack_write_commit & call_taken
     let rst_commit = second_stack_write_commit & decoded.rst
+    let hl_indirect_adjust_commit = memory_commit &
+        (decoded.load_a_indirect | decoded.store_a_indirect) & instruction[5]
     let mut signed_operand = const_bits<16>(0)
     signed_operand[0..8] = operand
     for i in 8..16 { signed_operand[i] = operand[7] }
@@ -203,7 +228,7 @@ module sm83_core_next(
     let mut rst_target = const_bits<16>(0)
     rst_target[3..6] = instruction[3..6]
     let write_after_operand = (decoded.load_immediate8 & destination_is_memory) |
-        memory_increment | memory_decrement
+        memory_increment | memory_decrement | addressed_memory_transfer
     let mut next = state
 
     next[0..8] = if pop_commit & pair3 {
@@ -271,16 +296,20 @@ module sm83_core_next(
     next[44..52] = if pop_commit & pair2 {
         high_operand
     } else {
-        if immediate16_commit & pair2 {
-            high_operand
+        if hl_indirect_adjust_commit {
+            adjusted_hl[8..16]
         } else {
-            if add_hl_commit {
-                added_hl.result[8..16]
+            if immediate16_commit & pair2 {
+                high_operand
             } else {
-                if pair_write & pair2 {
-                    pair_write_value[8..16]
+                if add_hl_commit {
+                    added_hl.result[8..16]
                 } else {
-                    if register_write & selected[4] { write_data } else { h }
+                    if pair_write & pair2 {
+                        pair_write_value[8..16]
+                    } else {
+                        if register_write & selected[4] { write_data } else { h }
+                    }
                 }
             }
         }
@@ -288,16 +317,20 @@ module sm83_core_next(
     next[52..60] = if pop_commit & pair2 {
         operand
     } else {
-        if immediate16_commit & pair2 {
-            operand
+        if hl_indirect_adjust_commit {
+            adjusted_hl[0..8]
         } else {
-            if add_hl_commit {
-                added_hl.result[0..8]
+            if immediate16_commit & pair2 {
+                operand
             } else {
-                if pair_write & pair2 {
-                    pair_write_value[0..8]
+                if add_hl_commit {
+                    added_hl.result[0..8]
                 } else {
-                    if register_write & selected[5] { write_data } else { l }
+                    if pair_write & pair2 {
+                        pair_write_value[0..8]
+                    } else {
+                        if register_write & selected[5] { write_data } else { l }
+                    }
                 }
             }
         }
@@ -400,13 +433,21 @@ module sm83_core_next(
                                     if memory_ready { const_bits<4>(8) } else { const_bits<4>(7) }
                                 } else {
                                 if phases[8] {
-                                    if call_instruction {
-                                        if call_taken { const_bits<4>(11) } else { const_bits<4>(0) }
+                                    if decoded.store_sp_absolute {
+                                        const_bits<4>(11)
                                     } else {
-                                        if absolute_jump & absolute_jump_taken {
-                                            const_bits<4>(9)
+                                        if immediate16_load | immediate16_store {
+                                            const_bits<4>(5)
                                         } else {
-                                            const_bits<4>(0)
+                                            if call_instruction {
+                                                if call_taken { const_bits<4>(11) } else { const_bits<4>(0) }
+                                            } else {
+                                                if absolute_jump & absolute_jump_taken {
+                                                    const_bits<4>(9)
+                                                } else {
+                                                    const_bits<4>(0)
+                                                }
+                                            }
                                         }
                                     }
                                 } else {
@@ -417,7 +458,7 @@ module sm83_core_next(
                                             const_bits<4>(0)
                                         } else {
                                             if phases[11] {
-                                                if stack_write_instruction {
+                                                if two_byte_write_instruction {
                                                     const_bits<4>(12)
                                                 } else {
                                                     if memory_ready { const_bits<4>(13) } else { const_bits<4>(11) }
@@ -427,7 +468,7 @@ module sm83_core_next(
                                                     if memory_ready { const_bits<4>(13) } else { const_bits<4>(12) }
                                                 } else {
                                                     if phases[13] {
-                                                        if stack_write_instruction {
+                                                        if two_byte_write_instruction {
                                                             const_bits<4>(14)
                                                         } else {
                                                             if memory_ready { const_bits<4>(15) } else { const_bits<4>(13) }
@@ -506,16 +547,30 @@ module main(
     let return_instruction = decoded.ret | decoded.ret_conditional | decoded.reti
     let stack_write_instruction = decoded.push | call_instruction | decoded.rst
     let stack_read_instruction = decoded.pop | return_instruction
+    let indirect_load = decoded.load_a_indirect | decoded.load_high_c
+    let indirect_store = decoded.store_a_indirect | decoded.store_high_c
+    let immediate8_load = decoded.load_high_immediate
+    let immediate8_store = decoded.store_high_immediate
+    let immediate16_load = decoded.load_a_absolute
+    let immediate16_store = decoded.store_a_absolute
+    let special_load = indirect_load | immediate8_load | immediate16_load
+    let special_store = indirect_store | immediate8_store | immediate16_store
+    let direct_memory_transfer = indirect_load | indirect_store
+    let addressed_memory_transfer = immediate8_load | immediate8_store |
+        immediate16_load | immediate16_store
+    let two_byte_write_instruction = stack_write_instruction | decoded.store_sp_absolute
     let direct_stack_instruction = decoded.push | decoded.pop | return_instruction | decoded.rst
-    let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump
-    let immediate16_instruction = decoded.load_immediate16 | absolute_jump | call_instruction
+    let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump |
+        immediate8_load | immediate8_store
+    let immediate16_instruction = decoded.load_immediate16 | absolute_jump | call_instruction |
+        immediate16_load | immediate16_store | decoded.store_sp_absolute
     let immediate_instruction = immediate8_instruction | immediate16_instruction
     let internal16_instruction = decoded.inc16 | decoded.dec16 | decoded.add_hl16
     let read_operand = immediate_instruction | memory_alu | memory_load | memory_increment | memory_decrement
     let direct_supported = direct_alu | direct_load | register_increment | register_decrement |
         decoded.halt | decoded.jump_hl
     let supported = direct_supported | read_operand | memory_store | internal16_instruction |
-        direct_stack_instruction
+        direct_stack_instruction | direct_memory_transfer
     let source = sm83_read_port(
         decoded.source,
         state[12..20],
@@ -541,14 +596,45 @@ module main(
         state[52..60],
     )
     let mut hl = const_bits<16>(0)
+    let mut bc = const_bits<16>(0)
+    let mut de = const_bits<16>(0)
+    let mut immediate_address = const_bits<16>(0)
+    let mut high_address = const_bits<16>(0)
     let mut full_flags = const_bits<8>(0)
     let stack_write_value = if decoded.push { stack_pair.value } else { state[60..76] }
     hl[0..8] = state[52..60]
     hl[8..16] = state[44..52]
+    bc[0..8] = state[20..28]
+    bc[8..16] = state[12..20]
+    de[0..8] = state[36..44]
+    de[8..16] = state[28..36]
+    immediate_address[0..8] = operand
+    immediate_address[8..16] = state[112..120]
+    high_address[0..8] = if decoded.load_high_c | decoded.store_high_c { state[20..28] } else { operand }
+    high_address[8..16] = const_bits<8>(255)
     full_flags[4..8] = state[8..12]
+    let pair_address = if instruction_value[5] {
+        hl
+    } else {
+        if instruction_value[4] { de } else { bc }
+    }
+    let special_address = if decoded.load_a_indirect | decoded.store_a_indirect {
+        pair_address
+    } else {
+        if decoded.load_high_immediate | decoded.store_high_immediate |
+            decoded.load_high_c | decoded.store_high_c {
+            high_address
+        } else {
+            immediate_address
+        }
+    }
 
-    memory_address = if stack_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
-        decrement<16>(state[76..92]).result
+    memory_address = if two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
+        if decoded.store_sp_absolute {
+            if phases[11] | phases[12] { immediate_address } else { increment<16>(immediate_address).result }
+        } else {
+            decrement<16>(state[76..92]).result
+        }
     } else {
         if stack_read_instruction & (phases[11] | phases[13]) {
             state[76..92]
@@ -556,24 +642,39 @@ module main(
             if phases[3] | phases[7] {
                 if immediate_instruction { state[60..76] } else { hl }
             } else {
-                if phases[5] | phases[6] { hl } else { state[60..76] }
+                if phases[5] | phases[6] {
+                    if special_load | special_store { special_address } else { hl }
+                } else {
+                    state[60..76]
+                }
             }
         }
     }
     memory_read = phases[0] | phases[3] | phases[7] |
-        (stack_read_instruction & (phases[11] | phases[13]))
-    memory_write = phases[5] | phases[6] |
-        (stack_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]))
-    memory_write_data = if stack_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
-        if phases[11] | phases[12] { stack_write_value[8..16] } else { stack_write_value[0..8] }
-    } else {
-        if decoded.load_immediate8 & destination_is_memory {
-            operand
+        (stack_read_instruction & (phases[11] | phases[13])) |
+        (special_load & (phases[5] | phases[6]))
+    let single_memory_write = memory_store | (decoded.load_immediate8 & destination_is_memory) |
+        memory_increment | memory_decrement | special_store
+    memory_write = (single_memory_write & (phases[5] | phases[6])) |
+        (two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]))
+    memory_write_data = if two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
+        if decoded.store_sp_absolute {
+            if phases[11] | phases[12] { state[76..84] } else { state[84..92] }
         } else {
-            if memory_increment {
-                incremented.result
+            if phases[11] | phases[12] { stack_write_value[8..16] } else { stack_write_value[0..8] }
+        }
+    } else {
+        if special_store {
+            state[0..8]
+        } else {
+            if decoded.load_immediate8 & destination_is_memory {
+            operand
             } else {
-                if memory_decrement { decremented.result } else { source.value }
+                if memory_increment {
+                    incremented.result
+                } else {
+                    if memory_decrement { decremented.result } else { source.value }
+                }
             }
         }
     }

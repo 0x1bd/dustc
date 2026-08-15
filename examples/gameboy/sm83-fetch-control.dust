@@ -27,6 +27,15 @@ module sm83_instruction_decode(
     output ret_conditional: bit,
     output reti: bit,
     output rst: bit,
+    output load_a_indirect: bit,
+    output store_a_indirect: bit,
+    output load_high_immediate: bit,
+    output store_high_immediate: bit,
+    output load_high_c: bit,
+    output store_high_c: bit,
+    output load_a_absolute: bit,
+    output store_a_absolute: bit,
+    output store_sp_absolute: bit,
     output block_three: bit,
     output halt: bit,
 ) {
@@ -61,6 +70,16 @@ module sm83_instruction_decode(
     let interrupt_return = three & (~instruction[5]) & instruction[4] & instruction[3] &
         (~instruction[2]) & (~instruction[1]) & instruction[0]
     let restart = three & instruction[2] & instruction[1] & instruction[0]
+    let indirect_load = zero & instruction[3] & (~instruction[2]) & instruction[1] & (~instruction[0])
+    let indirect_store = zero & (~instruction[3]) & (~instruction[2]) & instruction[1] & (~instruction[0])
+    let high_immediate = three & instruction[5] & (~instruction[3]) & (~instruction[2]) &
+        (~instruction[1]) & (~instruction[0])
+    let high_c = three & instruction[5] & (~instruction[3]) & (~instruction[2]) &
+        instruction[1] & (~instruction[0])
+    let absolute_a = three & instruction[5] & instruction[3] & (~instruction[2]) &
+        instruction[1] & (~instruction[0])
+    let absolute_sp = zero & (~instruction[5]) & (~instruction[4]) & instruction[3] &
+        (~instruction[2]) & (~instruction[1]) & (~instruction[0])
     let source_is_six = instruction[2] & instruction[1] & (~instruction[0])
     let destination_is_six = instruction[5] & instruction[4] & (~instruction[3])
     let is_halt = load & source_is_six & destination_is_six
@@ -92,6 +111,15 @@ module sm83_instruction_decode(
     ret_conditional = conditional_return
     reti = interrupt_return
     rst = restart
+    load_a_indirect = indirect_load
+    store_a_indirect = indirect_store
+    load_high_immediate = high_immediate & instruction[4]
+    store_high_immediate = high_immediate & (~instruction[4])
+    load_high_c = high_c & instruction[4]
+    store_high_c = high_c & (~instruction[4])
+    load_a_absolute = absolute_a & instruction[4]
+    store_a_absolute = absolute_a & (~instruction[4])
+    store_sp_absolute = absolute_sp
     block_three = three
     halt = is_halt
 }
@@ -194,6 +222,15 @@ module sm83_fetch_control_demo(
         ret_conditional: bit,
         reti: bit,
         rst: bit,
+        load_a_indirect: bit,
+        store_a_indirect: bit,
+        load_high_immediate: bit,
+        store_high_immediate: bit,
+        load_high_c: bit,
+        store_high_c: bit,
+        load_a_absolute: bit,
+        store_a_absolute: bit,
+        store_sp_absolute: bit,
         block_three: bit,
         halt: bit,
     },
@@ -242,6 +279,15 @@ module sm83_fetch_control_demo(
     ret_conditional = decoded.ret_conditional
     reti = decoded.reti
     rst = decoded.rst
+    load_a_indirect = decoded.load_a_indirect
+    store_a_indirect = decoded.store_a_indirect
+    load_high_immediate = decoded.load_high_immediate
+    store_high_immediate = decoded.store_high_immediate
+    load_high_c = decoded.load_high_c
+    store_high_c = decoded.store_high_c
+    load_a_absolute = decoded.load_a_absolute
+    store_a_absolute = decoded.store_a_absolute
+    store_sp_absolute = decoded.store_sp_absolute
     block_three = decoded.block_three
     halt = decoded.halt
 }
