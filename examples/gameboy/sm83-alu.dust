@@ -125,6 +125,23 @@ module sm83_dec8(
     flags[3] = decremented.flags[3]
 }
 
+module sm83_add_hl16(
+    input hl: bits<16>,
+    input value: bits<16>,
+    input flags_in: bits<4>,
+    output result: bits<16>,
+    output flags: bits<4>,
+) {
+    let low = ripple_add<12>(hl[0..12], value[0..12], false)
+    let high = ripple_add<4>(hl[12..16], value[12..16], low.carry_out)
+    result[0..12] = low.sum
+    result[12..16] = high.sum
+    flags[0] = high.carry_out
+    flags[1] = low.carry_out
+    flags[2] = false
+    flags[3] = flags_in[3]
+}
+
 module sm83_alu_demo(
     #[panel]
     input operands {

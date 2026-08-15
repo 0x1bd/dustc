@@ -1,9 +1,44 @@
+module sm83_select_pair(
+    input select: bits<2>,
+    input b: bits<8>,
+    input c: bits<8>,
+    input d: bits<8>,
+    input e: bits<8>,
+    input h: bits<8>,
+    input l: bits<8>,
+    input sp: bits<16>,
+    output value: bits<16>,
+) {
+    let mut bc = const_bits<16>(0)
+    let mut de = const_bits<16>(0)
+    let mut hl = const_bits<16>(0)
+    bc[0..8] = c
+    bc[8..16] = b
+    de[0..8] = e
+    de[8..16] = d
+    hl[0..8] = l
+    hl[8..16] = h
+    let low = if select[0] { de } else { bc }
+    let high = if select[0] { sp } else { hl }
+    value = if select[1] { high } else { low }
+}
+
+module sm83_condition(
+    input select: bits<2>,
+    input flags: bits<4>,
+    output taken: bit,
+) {
+    let zero = if select[0] { flags[3] } else { ~flags[3] }
+    let carry = if select[0] { flags[0] } else { ~flags[0] }
+    taken = if select[1] { carry } else { zero }
+}
+
 module sm83_core_next(
-    input state: bits<102>,
+    input state: bits<120>,
     input memory_data: bits<8>,
     input memory_ready: bit,
     input wake: bit,
-    output next_state: bits<102>,
+    output next_state: bits<120>,
 ) {
     let a = state[0..8]
     let flags = state[8..12]
@@ -15,63 +50,270 @@ module sm83_core_next(
     let l = state[52..60]
     let pc = state[60..76]
     let instruction = state[92..100]
-    let phase = state[100..102]
+    let phase = state[100..104]
+    let operand = state[104..112]
+    let high_operand = state[112..120]
+    let sp = state[76..92]
+    let phases = decode<16>(phase)
     let decoded = sm83_instruction_decode(instruction)
+    let condition = sm83_condition(instruction[3..5], flags)
     let source = sm83_read_port(decoded.source, b, c, d, e, h, l, memory_data, a)
     let target = sm83_read_port(decoded.destination, b, c, d, e, h, l, memory_data, a)
-    let alu = sm83_alu(a, source.value, flags[0], decoded.alu_operation)
-    let incremented = sm83_inc8(target.value, flags[0])
-    let decremented = sm83_dec8(target.value, flags[0])
-    let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
     let source_is_memory = decoded.source[2] & decoded.source[1] & (~decoded.source[0])
+    let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
+    let direct_alu = decoded.alu8 & (~source_is_memory)
+    let memory_alu = decoded.alu8 & source_is_memory
+    let direct_load = decoded.load8 & (~source_is_memory) & (~destination_is_memory)
+    let memory_load = decoded.load8 & source_is_memory
+    let memory_store = decoded.load8 & destination_is_memory
     let register_increment = decoded.inc8 & (~destination_is_memory)
     let register_decrement = decoded.dec8 & (~destination_is_memory)
-    let memory_alu = decoded.alu8 & source_is_memory
-    let supported = decoded.alu8 | register_increment | register_decrement | decoded.halt
-    let execute_ready = supported & if memory_alu { memory_ready } else { true }
-    let fetching = (~phase[1]) & (~phase[0])
-    let executing = (~phase[1]) & phase[0]
-    let stopped = phase[1]
-    let fetch_commit = fetching & memory_ready
-    let execute_commit = executing & execute_ready
-    let register_commit = execute_commit & (decoded.alu8 | register_increment | register_decrement)
-    let flags_commit = register_commit
-    let write_enable = register_commit & if decoded.alu8 { alu.write_result } else { true }
-    let write_address = if decoded.alu8 { const_bits<3>(7) } else { decoded.destination }
-    let write_data = if decoded.alu8 {
+    let memory_increment = decoded.inc8 & destination_is_memory
+    let memory_decrement = decoded.dec8 & destination_is_memory
+    let relative_jump = decoded.jump_relative | decoded.jump_relative_conditional
+    let absolute_jump = decoded.jump_absolute | decoded.jump_absolute_conditional
+    let relative_jump_taken = decoded.jump_relative | (decoded.jump_relative_conditional & condition.taken)
+    let absolute_jump_taken = decoded.jump_absolute | (decoded.jump_absolute_conditional & condition.taken)
+    let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump
+    let immediate16_instruction = decoded.load_immediate16 | absolute_jump
+    let immediate_instruction = immediate8_instruction | immediate16_instruction
+    let internal16_instruction = decoded.inc16 | decoded.dec16 | decoded.add_hl16
+    let read_operand = immediate_instruction | memory_alu | memory_load | memory_increment | memory_decrement
+    let write_memory_direct = memory_store
+    let direct_supported = direct_alu | direct_load | register_increment | register_decrement |
+        decoded.halt | decoded.jump_hl
+    let supported = direct_supported | read_operand | write_memory_direct | internal16_instruction
+    let direct_commit = phases[1] & direct_supported & (~decoded.halt)
+    let operand_commit = phases[4] & (~(decoded.load_immediate8 & destination_is_memory)) &
+        (~memory_increment) & (~memory_decrement)
+    let memory_commit = phases[6] & memory_ready
+    let active_alu = (direct_commit & decoded.alu8) | (operand_commit & (decoded.alu8 | decoded.alu_immediate8))
+    let active_increment = (direct_commit & register_increment) | (operand_commit & memory_increment)
+    let active_decrement = (direct_commit & register_decrement) | (operand_commit & memory_decrement)
+    let alu_right = if phases[4] { operand } else { source.value }
+    let target_value = if phases[4] | phases[5] | phases[6] { operand } else { target.value }
+    let alu = sm83_alu(a, alu_right, flags[0], decoded.alu_operation)
+    let incremented = sm83_inc8(target_value, flags[0])
+    let decremented = sm83_dec8(target_value, flags[0])
+    let register_load = (direct_commit & direct_load) |
+        (operand_commit & (memory_load | (decoded.load_immediate8 & (~destination_is_memory))))
+    let register_write = register_load | (active_alu & alu.write_result) | active_increment | active_decrement
+    let flags_write = active_alu | active_increment | active_decrement |
+        (memory_commit & (memory_increment | memory_decrement))
+    let write_address = if active_alu { const_bits<3>(7) } else { decoded.destination }
+    let load_data = if phases[4] { operand } else { source.value }
+    let write_data = if active_alu {
         alu.value
     } else {
-        if register_increment { incremented.result } else { decremented.result }
+        if active_increment {
+            incremented.result
+        } else {
+            if active_decrement { decremented.result } else { load_data }
+        }
     }
-    let write_flags = if decoded.alu8 {
+    let write_flags = if active_alu {
         alu.flags
     } else {
-        if register_increment { incremented.flags } else { decremented.flags }
+        if active_increment | (memory_commit & memory_increment) {
+            incremented.flags
+        } else {
+            decremented.flags
+        }
     }
     let selected = decode<8>(write_address)
+    let fetch_commit = phases[0] & memory_ready
+    let operand_read_commit = phases[3] & memory_ready
+    let immediate_read_commit = operand_read_commit & immediate_instruction
+    let immediate16_commit = phases[8] & decoded.load_immediate16
+    let high_operand_read_commit = phases[7] & memory_ready & immediate16_instruction
+    let pair_select = instruction[4..6]
+    let pair0 = (~pair_select[1]) & (~pair_select[0])
+    let pair1 = (~pair_select[1]) & pair_select[0]
+    let pair2 = pair_select[1] & (~pair_select[0])
+    let pair3 = pair_select[1] & pair_select[0]
+    let selected_pair = sm83_select_pair(pair_select, b, c, d, e, h, l, sp)
+    let incremented_pair = increment<16>(selected_pair.value)
+    let decremented_pair = decrement<16>(selected_pair.value)
+    let mut hl_value = const_bits<16>(0)
+    hl_value[0..8] = l
+    hl_value[8..16] = h
+    let added_hl = sm83_add_hl16(hl_value, selected_pair.value, flags)
+    let internal16_commit = phases[10]
+    let pair_increment_commit = internal16_commit & decoded.inc16
+    let pair_decrement_commit = internal16_commit & decoded.dec16
+    let pair_write = pair_increment_commit | pair_decrement_commit
+    let pair_write_value = if pair_increment_commit { incremented_pair.result } else { decremented_pair.result }
+    let add_hl_commit = internal16_commit & decoded.add_hl16
+    let relative_jump_commit = phases[10] & relative_jump_taken
+    let absolute_jump_commit = phases[10] & absolute_jump_taken
+    let jump_hl_commit = phases[1] & decoded.jump_hl
+    let mut signed_operand = const_bits<16>(0)
+    signed_operand[0..8] = operand
+    for i in 8..16 { signed_operand[i] = operand[7] }
+    let relative_target = ripple_add<16>(pc, signed_operand, false)
+    let mut immediate16_value = const_bits<16>(0)
+    immediate16_value[0..8] = operand
+    immediate16_value[8..16] = high_operand
+    let write_after_operand = (decoded.load_immediate8 & destination_is_memory) |
+        memory_increment | memory_decrement
     let mut next = state
 
-    next[0..8] = if write_enable & selected[7] { write_data } else { a }
-    next[8..12] = if flags_commit { write_flags } else { flags }
-    next[12..20] = if write_enable & selected[0] { write_data } else { b }
-    next[20..28] = if write_enable & selected[1] { write_data } else { c }
-    next[28..36] = if write_enable & selected[2] { write_data } else { d }
-    next[36..44] = if write_enable & selected[3] { write_data } else { e }
-    next[44..52] = if write_enable & selected[4] { write_data } else { h }
-    next[52..60] = if write_enable & selected[5] { write_data } else { l }
-    next[60..76] = if fetch_commit { increment<16>(pc).result } else { pc }
-    next[92..100] = if fetch_commit { memory_data } else { instruction }
-    next[100..102] = if stopped {
-        if wake { const_bits<2>(0) } else { const_bits<2>(2) }
+    next[0..8] = if register_write & selected[7] { write_data } else { a }
+    next[8..12] = if add_hl_commit { added_hl.flags } else { if flags_write { write_flags } else { flags } }
+    next[12..20] = if immediate16_commit & pair0 {
+        high_operand
     } else {
-        if executing {
-            if execute_ready {
-                if decoded.halt { const_bits<2>(2) } else { const_bits<2>(0) }
+        if pair_write & pair0 {
+            pair_write_value[8..16]
+        } else {
+            if register_write & selected[0] { write_data } else { b }
+        }
+    }
+    next[20..28] = if immediate16_commit & pair0 {
+        operand
+    } else {
+        if pair_write & pair0 {
+            pair_write_value[0..8]
+        } else {
+            if register_write & selected[1] { write_data } else { c }
+        }
+    }
+    next[28..36] = if immediate16_commit & pair1 {
+        high_operand
+    } else {
+        if pair_write & pair1 {
+            pair_write_value[8..16]
+        } else {
+            if register_write & selected[2] { write_data } else { d }
+        }
+    }
+    next[36..44] = if immediate16_commit & pair1 {
+        operand
+    } else {
+        if pair_write & pair1 {
+            pair_write_value[0..8]
+        } else {
+            if register_write & selected[3] { write_data } else { e }
+        }
+    }
+    next[44..52] = if immediate16_commit & pair2 {
+        high_operand
+    } else {
+        if add_hl_commit {
+            added_hl.result[8..16]
+        } else {
+            if pair_write & pair2 {
+                pair_write_value[8..16]
             } else {
-                const_bits<2>(1)
+                if register_write & selected[4] { write_data } else { h }
+            }
+        }
+    }
+    next[52..60] = if immediate16_commit & pair2 {
+        operand
+    } else {
+        if add_hl_commit {
+            added_hl.result[0..8]
+        } else {
+            if pair_write & pair2 {
+                pair_write_value[0..8]
+            } else {
+                if register_write & selected[5] { write_data } else { l }
+            }
+        }
+    }
+    next[60..76] = if jump_hl_commit {
+        hl_value
+    } else {
+        if relative_jump_commit {
+            relative_target.sum
+        } else {
+            if absolute_jump_commit {
+                immediate16_value
+            } else {
+                if fetch_commit | immediate_read_commit | high_operand_read_commit {
+                    increment<16>(pc).result
+                } else {
+                    pc
+                }
+            }
+        }
+    }
+    next[76..92] = if immediate16_commit & pair3 {
+        immediate16_value
+    } else {
+        if pair_write & pair3 { pair_write_value } else { sp }
+    }
+    next[92..100] = if fetch_commit { memory_data } else { instruction }
+    next[104..112] = if operand_read_commit { memory_data } else { operand }
+    next[112..120] = if high_operand_read_commit { memory_data } else { high_operand }
+    next[100..104] = if phases[0] {
+        if memory_ready { const_bits<4>(1) } else { const_bits<4>(0) }
+    } else {
+        if phases[1] {
+            if decoded.halt {
+                const_bits<4>(2)
+            } else {
+                if internal16_instruction {
+                    const_bits<4>(9)
+                } else {
+                    if direct_supported {
+                        const_bits<4>(0)
+                    } else {
+                        if read_operand {
+                            const_bits<4>(3)
+                        } else {
+                            if write_memory_direct { const_bits<4>(5) } else { const_bits<4>(1) }
+                        }
+                    }
+                }
             }
         } else {
-            if memory_ready { const_bits<2>(1) } else { const_bits<2>(0) }
+            if phases[2] {
+                if wake { const_bits<4>(0) } else { const_bits<4>(2) }
+            } else {
+                if phases[3] {
+                    if memory_ready { const_bits<4>(4) } else { const_bits<4>(3) }
+                } else {
+                    if phases[4] {
+                        if immediate16_instruction {
+                            const_bits<4>(7)
+                        } else {
+                            if relative_jump {
+                                if relative_jump_taken { const_bits<4>(9) } else { const_bits<4>(0) }
+                            } else {
+                                if write_after_operand { const_bits<4>(5) } else { const_bits<4>(0) }
+                            }
+                        }
+                    } else {
+                        if phases[5] {
+                            const_bits<4>(6)
+                        } else {
+                            if phases[6] {
+                                if memory_ready { const_bits<4>(0) } else { const_bits<4>(6) }
+                            } else {
+                                if phases[7] {
+                                    if memory_ready { const_bits<4>(8) } else { const_bits<4>(7) }
+                                } else {
+                                    if phases[8] {
+                                        if absolute_jump & absolute_jump_taken {
+                                            const_bits<4>(9)
+                                        } else {
+                                            const_bits<4>(0)
+                                        }
+                                    } else {
+                                        if phases[9] {
+                                            const_bits<4>(10)
+                                        } else {
+                                            if phases[10] { const_bits<4>(0) } else { const_bits<4>(0) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     next_state = next
@@ -94,37 +336,90 @@ module main(
     output instruction: bits<8>,
     output a: bits<8>,
     output f: bits<8>,
+    output b: bits<8>,
+    output c: bits<8>,
+    output d: bits<8>,
+    output e: bits<8>,
+    output h: bits<8>,
+    output l: bits<8>,
 ) {
-    let rec state = resettable_register<102>(
+    let rec state = resettable_register<120>(
         sm83_core_next(state, memory_data, memory_ready, wake).next_state,
         reset,
         clock,
     )
-    let decoded = sm83_instruction_decode(state[92..100])
-    let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
+    let instruction_value = state[92..100]
+    let decoded = sm83_instruction_decode(instruction_value)
+    let phase = state[100..104]
+    let phases = decode<16>(phase)
+    let operand = state[104..112]
     let source_is_memory = decoded.source[2] & decoded.source[1] & (~decoded.source[0])
+    let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
+    let direct_alu = decoded.alu8 & (~source_is_memory)
+    let memory_alu = decoded.alu8 & source_is_memory
+    let direct_load = decoded.load8 & (~source_is_memory) & (~destination_is_memory)
+    let memory_load = decoded.load8 & source_is_memory
+    let memory_store = decoded.load8 & destination_is_memory
     let register_increment = decoded.inc8 & (~destination_is_memory)
     let register_decrement = decoded.dec8 & (~destination_is_memory)
-    let memory_alu = decoded.alu8 & source_is_memory
-    let supported = decoded.alu8 | register_increment | register_decrement | decoded.halt
-    let phase = state[100..102]
-    let fetching = (~phase[1]) & (~phase[0])
-    let executing = (~phase[1]) & phase[0]
+    let memory_increment = decoded.inc8 & destination_is_memory
+    let memory_decrement = decoded.dec8 & destination_is_memory
+    let relative_jump = decoded.jump_relative | decoded.jump_relative_conditional
+    let absolute_jump = decoded.jump_absolute | decoded.jump_absolute_conditional
+    let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump
+    let immediate16_instruction = decoded.load_immediate16 | absolute_jump
+    let immediate_instruction = immediate8_instruction | immediate16_instruction
+    let internal16_instruction = decoded.inc16 | decoded.dec16 | decoded.add_hl16
+    let read_operand = immediate_instruction | memory_alu | memory_load | memory_increment | memory_decrement
+    let direct_supported = direct_alu | direct_load | register_increment | register_decrement |
+        decoded.halt | decoded.jump_hl
+    let supported = direct_supported | read_operand | memory_store | internal16_instruction
+    let source = sm83_read_port(
+        decoded.source,
+        state[12..20],
+        state[20..28],
+        state[28..36],
+        state[36..44],
+        state[44..52],
+        state[52..60],
+        memory_data,
+        state[0..8],
+    )
+    let incremented = sm83_inc8(operand, state[8])
+    let decremented = sm83_dec8(operand, state[8])
     let mut hl = const_bits<16>(0)
     let mut full_flags = const_bits<8>(0)
     hl[0..8] = state[52..60]
     hl[8..16] = state[44..52]
     full_flags[4..8] = state[8..12]
 
-    memory_address = if executing & memory_alu { hl } else { state[60..76] }
-    memory_read = fetching | (executing & memory_alu)
-    memory_write = false
-    memory_write_data = const_bits<8>(0)
-    halted = phase[1]
-    unsupported = executing & (~supported)
+    memory_address = if phases[3] | phases[7] {
+        if immediate_instruction { state[60..76] } else { hl }
+    } else {
+        if phases[5] | phases[6] { hl } else { state[60..76] }
+    }
+    memory_read = phases[0] | phases[3] | phases[7]
+    memory_write = phases[5] | phases[6]
+    memory_write_data = if decoded.load_immediate8 & destination_is_memory {
+        operand
+    } else {
+        if memory_increment {
+            incremented.result
+        } else {
+            if memory_decrement { decremented.result } else { source.value }
+        }
+    }
+    halted = phases[2]
+    unsupported = phases[1] & (~supported)
     pc = state[60..76]
     sp = state[76..92]
-    instruction = state[92..100]
+    instruction = instruction_value
     a = state[0..8]
     f = full_flags
+    b = state[12..20]
+    c = state[20..28]
+    d = state[28..36]
+    e = state[36..44]
+    h = state[44..52]
+    l = state[52..60]
 }

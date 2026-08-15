@@ -5,9 +5,20 @@ module sm83_instruction_decode(
     output alu_operation: bits<3>,
     output block_zero: bit,
     output load8: bit,
+    output load_immediate8: bit,
+    output load_immediate16: bit,
     output alu8: bit,
+    output alu_immediate8: bit,
     output inc8: bit,
     output dec8: bit,
+    output inc16: bit,
+    output dec16: bit,
+    output add_hl16: bit,
+    output jump_relative: bit,
+    output jump_relative_conditional: bit,
+    output jump_absolute: bit,
+    output jump_absolute_conditional: bit,
+    output jump_hl: bit,
     output block_three: bit,
     output halt: bit,
 ) {
@@ -17,6 +28,19 @@ module sm83_instruction_decode(
     let three = instruction[7] & instruction[6]
     let increment = zero & instruction[2] & (~instruction[1]) & (~instruction[0])
     let decrement = zero & instruction[2] & (~instruction[1]) & instruction[0]
+    let immediate = instruction[2] & instruction[1] & (~instruction[0])
+    let immediate16 = zero & (~instruction[3]) & (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let increment16 = zero & (~instruction[3]) & (~instruction[2]) & instruction[1] & instruction[0]
+    let decrement16 = zero & instruction[3] & (~instruction[2]) & instruction[1] & instruction[0]
+    let add_hl = zero & instruction[3] & (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let relative_jump = zero & (~instruction[5]) & instruction[4] & instruction[3] &
+        (~instruction[2]) & (~instruction[1]) & (~instruction[0])
+    let relative_conditional = zero & instruction[5] & (~instruction[2]) & (~instruction[1]) & (~instruction[0])
+    let absolute_jump = three & (~instruction[5]) & (~instruction[4]) & (~instruction[3]) &
+        (~instruction[2]) & instruction[1] & instruction[0]
+    let absolute_conditional = three & (~instruction[5]) & (~instruction[2]) & instruction[1] & (~instruction[0])
+    let hl_jump = instruction[7] & instruction[6] & instruction[5] & (~instruction[4]) & instruction[3] &
+        (~instruction[2]) & (~instruction[1]) & instruction[0]
     let source_is_six = instruction[2] & instruction[1] & (~instruction[0])
     let destination_is_six = instruction[5] & instruction[4] & (~instruction[3])
     let is_halt = load & source_is_six & destination_is_six
@@ -26,9 +50,20 @@ module sm83_instruction_decode(
     alu_operation = instruction[3..6]
     block_zero = zero
     load8 = load & (~is_halt)
+    load_immediate8 = zero & immediate
+    load_immediate16 = immediate16
     alu8 = arithmetic
+    alu_immediate8 = three & immediate
     inc8 = increment
     dec8 = decrement
+    inc16 = increment16
+    dec16 = decrement16
+    add_hl16 = add_hl
+    jump_relative = relative_jump
+    jump_relative_conditional = relative_conditional
+    jump_absolute = absolute_jump
+    jump_absolute_conditional = absolute_conditional
+    jump_hl = hl_jump
     block_three = three
     halt = is_halt
 }
@@ -109,9 +144,20 @@ module sm83_fetch_control_demo(
         alu_operation: bits<3>,
         block_zero: bit,
         load8: bit,
+        load_immediate8: bit,
+        load_immediate16: bit,
         alu8: bit,
+        alu_immediate8: bit,
         inc8: bit,
         dec8: bit,
+        inc16: bit,
+        dec16: bit,
+        add_hl16: bit,
+        jump_relative: bit,
+        jump_relative_conditional: bit,
+        jump_absolute: bit,
+        jump_absolute_conditional: bit,
+        jump_hl: bit,
         block_three: bit,
         halt: bit,
     },
@@ -138,9 +184,20 @@ module sm83_fetch_control_demo(
     alu_operation = decoded.alu_operation
     block_zero = decoded.block_zero
     load8 = decoded.load8
+    load_immediate8 = decoded.load_immediate8
+    load_immediate16 = decoded.load_immediate16
     alu8 = decoded.alu8
+    alu_immediate8 = decoded.alu_immediate8
     inc8 = decoded.inc8
     dec8 = decoded.dec8
+    inc16 = decoded.inc16
+    dec16 = decoded.dec16
+    add_hl16 = decoded.add_hl16
+    jump_relative = decoded.jump_relative
+    jump_relative_conditional = decoded.jump_relative_conditional
+    jump_absolute = decoded.jump_absolute
+    jump_absolute_conditional = decoded.jump_absolute_conditional
+    jump_hl = decoded.jump_hl
     block_three = decoded.block_three
     halt = decoded.halt
 }
