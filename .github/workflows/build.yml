@@ -90,6 +90,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Test extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npm test
       - name: Package extension
         working-directory: editors/vscode
         run: |

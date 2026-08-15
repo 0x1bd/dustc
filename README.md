@@ -147,6 +147,7 @@ The extension in [`editors/vscode`](editors/vscode) adds:
 - inline compiler errors
 - live physical-compilation progress
 - automatic downloading of stable or nightly dustc binaries
+- download and lifecycle controls for the latest optraIX server build
 
 Tagged releases include `dust-vscode.vsix`. Install it from the command line with either VS Code or VSCodium:
 
@@ -174,6 +175,11 @@ The extension stores the downloaded compiler itself. If you already built dustc 
 3. `dustc` on `PATH`
 
 To use a specific executable, set `dust.compilerPath` in VS Code settings.
+
+The extension can also download the latest successful optraIX `main` build and run it through
+**Dust: Run optraIX**. Successful Dust builds are copied to the server's `schematics/` directory.
+See the [extension README](editors/vscode/README.md#optraix-server) for platform support, server
+arguments, and run-directory configuration.
 
 For example:
 

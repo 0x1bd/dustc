@@ -6,6 +6,7 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 const {spawn} = require("child_process");
+const {artifactForPlatform, extractExecutable, latestSuccessfulRun, matchingArtifact} = require("./optraix-artifact");
 
 const ASSETS = {
     "linux-x64": "dustc-linux-x86_64",
@@ -15,23 +16,32 @@ const ASSETS = {
 };
 
 const INSTALLED_TAG = "dust.installedTag";
+const OPTRAIX_INSTALLED_ARTIFACT = "dust.optraixInstalledArtifact";
+const OPTRAIX_REPOSITORY = "0x1bd/optraix";
 
 let output;
 let diagnostics;
+let optraixOutput;
+let optraixProcess;
 
 function activate(context) {
     output = vscode.window.createOutputChannel("Dust");
+    optraixOutput = vscode.window.createOutputChannel("optraIX");
     diagnostics = vscode.languages.createDiagnosticCollection("dust");
-    context.subscriptions.push(output, diagnostics);
+    context.subscriptions.push(output, optraixOutput, diagnostics);
 
     context.subscriptions.push(
         vscode.commands.registerCommand("dust.build", () => build(context)),
         vscode.commands.registerCommand("dust.downloadCompiler", () => downloadCompiler(context, true)),
         vscode.commands.registerCommand("dust.showCompilerPath", () => showCompilerPath(context)),
+        vscode.commands.registerCommand("dust.downloadOptraix", () => downloadOptraix(context, true)),
+        vscode.commands.registerCommand("dust.runOptraix", () => runOptraix(context)),
+        vscode.commands.registerCommand("dust.stopOptraix", () => stopOptraix(true)),
     );
 }
 
 function deactivate() {
+    stopOptraix(false);
 }
 
 function settings() {
@@ -41,6 +51,25 @@ function settings() {
 function managedPath(context) {
     const name = process.platform === "win32" ? "dustc.exe" : "dustc";
     return path.join(context.globalStorageUri.fsPath, "bin", name);
+}
+
+function managedOptraixPath(context) {
+    const platform = artifactForPlatform(process.platform, process.arch);
+    return path.join(context.globalStorageUri.fsPath, "optraix", "bin", platform?.executable ?? "optraix");
+}
+
+function optraixRunDirectory(context) {
+    const configured = settings().get("optraixRunDirectory", "").trim();
+    if (!configured) return path.join(context.globalStorageUri.fsPath, "optraix", "run");
+
+    const expanded = expandHome(configured);
+    if (path.isAbsolute(expanded)) return expanded;
+    const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    return path.resolve(workspace ?? context.globalStorageUri.fsPath, expanded);
+}
+
+function expandHome(candidate) {
+    return candidate.startsWith("~") ? path.join(os.homedir(), candidate.slice(1)) : candidate;
 }
 
 function isExecutableFile(candidate) {
@@ -56,9 +85,7 @@ function isExecutableFile(candidate) {
 function findCompiler(context) {
     const configured = settings().get("compilerPath", "").trim();
     if (configured) {
-        const expanded = configured.startsWith("~")
-            ? path.join(os.homedir(), configured.slice(1))
-            : configured;
+        const expanded = expandHome(configured);
         return isExecutableFile(expanded) ? expanded : undefined;
     }
 
@@ -190,6 +217,121 @@ async function latestRelease(repository, asset, channel, token) {
     return match;
 }
 
+async function downloadOptraix(context, interactive) {
+    const platform = artifactForPlatform(process.platform, process.arch);
+    if (!platform) {
+        await vscode.window.showErrorMessage(
+            `No prebuilt optraIX CI artifact is available for ${process.platform}-${process.arch}.`,
+        );
+        return undefined;
+    }
+
+    const destination = managedOptraixPath(context);
+    try {
+        return await vscode.window.withProgress(
+            {location: vscode.ProgressLocation.Notification, title: "Downloading optraIX", cancellable: true},
+            async (progress, token) => {
+                progress.report({message: "looking up latest successful main build"});
+                const artifact = await latestOptraixArtifact(platform.artifact, token);
+                const stamp = `${artifact.run.id}@${artifact.id}@${artifact.run.head_sha}`;
+                if (stamp === context.globalState.get(OPTRAIX_INSTALLED_ARTIFACT) && isExecutableFile(destination)) {
+                    if (interactive) void vscode.window.showInformationMessage("The latest optraIX is already installed.");
+                    return destination;
+                }
+
+                progress.report({message: `${artifact.run.head_sha.slice(0, 7)} (${platform.artifact})`});
+                await installOptraixArtifact(artifact, destination, platform.executable, token, (fraction) =>
+                    progress.report({message: `${Math.round(fraction * 100)}%`}),
+                );
+                await context.globalState.update(OPTRAIX_INSTALLED_ARTIFACT, stamp);
+                if (interactive) {
+                    void vscode.window.showInformationMessage(`Installed optraIX ${artifact.run.head_sha.slice(0, 7)}.`);
+                }
+                return destination;
+            },
+        );
+    } catch (error) {
+        if (error instanceof vscode.CancellationError) return undefined;
+        await vscode.window.showErrorMessage(`Could not download optraIX: ${describe(error)}`);
+        return undefined;
+    }
+}
+
+async function latestOptraixArtifact(name, token) {
+    const base = `https://api.github.com/repos/${OPTRAIX_REPOSITORY}/actions`;
+    const runs = JSON.parse(await fetchText(`${base}/workflows/build.yml/runs?branch=main&status=success&per_page=20`, token));
+    const run = latestSuccessfulRun(runs);
+    if (!run) throw new Error(`no successful main build found in ${OPTRAIX_REPOSITORY}`);
+
+    const artifacts = JSON.parse(await fetchText(`${base}/runs/${run.id}/artifacts?name=${encodeURIComponent(name)}&per_page=100`, token));
+    const artifact = matchingArtifact(artifacts, name);
+    if (!artifact) throw new Error(`build ${run.id} has no live ${name} artifact`);
+    return {...artifact, run};
+}
+
+async function installOptraixArtifact(artifact, destination, executable, token, onProgress) {
+    await fs.promises.mkdir(path.dirname(destination), {recursive: true});
+    const archive = `${destination}.zip`;
+    const candidate = `${destination}.candidate`;
+    try {
+        await fetchToFile(artifact.archive_download_url, archive, token, onProgress, false);
+        await fs.promises.rm(candidate, {force: true});
+        await extractExecutable(archive, executable, candidate);
+        if (process.platform !== "win32") await fs.promises.chmod(candidate, 0o755);
+        await fs.promises.rm(destination, {force: true});
+        await fs.promises.rename(candidate, destination);
+    } finally {
+        await fs.promises.rm(archive, {force: true});
+        await fs.promises.rm(candidate, {force: true});
+    }
+}
+
+async function runOptraix(context) {
+    if (optraixProcess) {
+        await vscode.window.showInformationMessage("optraIX is already running.");
+        return;
+    }
+
+    let executable = managedOptraixPath(context);
+    if (!isExecutableFile(executable)) executable = await downloadOptraix(context, false);
+    if (!executable) return;
+
+    const runDirectory = optraixRunDirectory(context);
+    const extra = settings().get("optraixArguments", []);
+    await fs.promises.mkdir(runDirectory, {recursive: true});
+
+    optraixOutput.clear();
+    optraixOutput.appendLine(`> ${executable} ${[...extra, "--run-dir", runDirectory].join(" ")}`);
+    const child = spawn(executable, [...extra, "--run-dir", runDirectory], {cwd: runDirectory});
+    optraixProcess = child;
+    child.stdout.on("data", (chunk) => optraixOutput.append(chunk.toString()));
+    child.stderr.on("data", (chunk) => optraixOutput.append(chunk.toString()));
+    child.on("error", async (error) => {
+        if (optraixProcess === child) optraixProcess = undefined;
+        optraixOutput.appendLine(describe(error));
+        optraixOutput.show(true);
+        await vscode.window.showErrorMessage(`Could not run optraIX: ${describe(error)}`);
+    });
+    child.on("close", (code, signal) => {
+        if (optraixProcess === child) optraixProcess = undefined;
+        optraixOutput.appendLine(`optraIX exited (${signal ?? code ?? "unknown"}).`);
+    });
+    optraixOutput.show(true);
+    await vscode.window.showInformationMessage(`optraIX started in ${runDirectory}.`);
+}
+
+async function stopOptraix(interactive) {
+    const child = optraixProcess;
+    if (!child) {
+        if (interactive) await vscode.window.showInformationMessage("optraIX is not running.");
+        return;
+    }
+    if (process.platform === "win32" && interactive) {
+        await vscode.window.showWarningMessage("Stopping optraIX on Windows may not save the world before termination.");
+    }
+    child.kill(process.platform === "win32" ? undefined : "SIGTERM");
+}
+
 const USER_AGENT = "dust-vscode";
 
 function request(url, token, headers, onResponse) {
@@ -238,7 +380,7 @@ function fetchText(url, token) {
     });
 }
 
-async function fetchToFile(url, destination, token, onProgress) {
+async function fetchToFile(url, destination, token, onProgress, executable = true) {
     await fs.promises.mkdir(path.dirname(destination), {recursive: true});
     const partial = `${destination}.partial`;
 
@@ -261,7 +403,7 @@ async function fetchToFile(url, destination, token, onProgress) {
 
     await fs.promises.rm(destination, {force: true});
     await fs.promises.rename(partial, destination);
-    await fs.promises.chmod(destination, 0o755);
+    if (executable && process.platform !== "win32") await fs.promises.chmod(destination, 0o755);
 }
 
 async function build(context) {
@@ -316,6 +458,7 @@ async function build(context) {
     if (result.code === 0) {
         const summary = result.stdout.trim().split("\n").pop() ?? `wrote ${schematic}`;
         await vscode.window.showInformationMessage(summary.replace(/^dustc: /, ""));
+        await copySchematicToOptraix(context, schematic);
         return;
     }
 
@@ -323,6 +466,19 @@ async function build(context) {
     const failure = result.stderr.trim();
     if (!failure.startsWith("error:")) {
         await vscode.window.showErrorMessage(failure.split("\n")[0] || `dustc exited with code ${result.code}`);
+    }
+}
+
+async function copySchematicToOptraix(context, schematic) {
+    const directory = path.join(optraixRunDirectory(context), "schematics");
+    const destination = path.join(directory, path.basename(schematic));
+    try {
+        await fs.promises.mkdir(directory, {recursive: true});
+        await fs.promises.copyFile(schematic, destination);
+        output.appendLine(`copied ${schematic} to ${destination}`);
+    } catch (error) {
+        output.appendLine(`could not copy ${schematic} to optraIX: ${describe(error)}`);
+        await vscode.window.showErrorMessage(`Built schematic but could not copy it to optraIX: ${describe(error)}`);
     }
 }
 

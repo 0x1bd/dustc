@@ -21,6 +21,12 @@
     "hardware"
   ],
   "main": "./extension.js",
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  },
+  "dependencies": {
+    "yauzl": "^3.2.0"
+  },
   "activationEvents": [
     "onLanguage:dust"
   ],
@@ -66,6 +72,21 @@
         "command": "dust.showCompilerPath",
         "title": "Show Compiler Path",
         "category": "Dust"
+      },
+      {
+        "command": "dust.downloadOptraix",
+        "title": "Download Latest optraIX",
+        "category": "Dust"
+      },
+      {
+        "command": "dust.runOptraix",
+        "title": "Run optraIX",
+        "category": "Dust"
+      },
+      {
+        "command": "dust.stopOptraix",
+        "title": "Stop optraIX",
+        "category": "Dust"
       }
     ],
     "menus": {
@@ -110,6 +131,19 @@
           },
           "default": [],
           "markdownDescription": "Extra arguments passed to `dustc build`, for example `--terminals`."
+        },
+        "dust.optraixRunDirectory": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Directory for optraIX worlds, players, and schematics. When empty, the extension uses managed global storage. Relative paths resolve from the first workspace folder."
+        },
+        "dust.optraixArguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra arguments passed to optraIX, for example `[\"--port\", \"25566\"]`. The configured optraIX run directory always takes precedence."
         }
       }
     },
