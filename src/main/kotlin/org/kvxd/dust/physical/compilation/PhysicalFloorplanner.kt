@@ -1,5 +1,6 @@
 package org.kvxd.dust.physical.compilation
 
+import java.util.BitSet
 import kotlin.math.abs
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.cell.behavior.CellBehavior
@@ -434,71 +435,72 @@ internal class PhysicalFloorplanner(
     ): List<GlobalTrack> {
         val folded = tierCount > 1
         val tracks = mutableListOf<GlobalTrack>()
+        val occupied = GlobalTrackOccupancy(folded, technology.isolation, GLOBAL_ROW_GUARD)
+        val blockedViaColumnsWithIsolation = BitSet()
+        blockedViaColumns.forEach { column ->
+            blockedViaColumnsWithIsolation.set(
+                (column - technology.isolation).coerceAtLeast(0),
+                column + technology.isolation + 1,
+            )
+        }
         requests.sortedWith(
             compareByDescending<GlobalTrackRequest> { (it.rowSpan.last - it.rowSpan.first + 1) * it.sinkRows.size }
                 .thenByDescending { it.rowSpan.last - it.rowSpan.first }
                 .thenBy { it.signal.index }
                 .thenBy { it.ordinal },
         ).forEach { request ->
+            val candidateOrder = compareBy<GlobalTrack>(
+                { abs(it.viaX - request.preferredX) },
+                { abs(it.trunkX - it.viaX) },
+                { maxOf(it.trunkX, it.viaX) >= cellWidth },
+                { maxOf(it.trunkX, it.viaX) },
+                { it.trunkX },
+            )
             var radius = 0
             var chosen: GlobalTrack? = null
             while (chosen == null) {
-                val viaCandidates = linkedSetOf(request.preferredX - radius, request.preferredX + radius)
-                chosen = viaCandidates.asSequence()
-                    .filter { it >= 0 }
-                    .filter { viaX ->
-                        (0 until tierCount).all { tier ->
-                            val tierViaX = viaX + tier * GLOBAL_TIER_VIA_PITCH
-                            blockedViaColumns.none { abs(it - tierViaX) <= technology.isolation }
+                val firstViaX = request.preferredX - radius
+                val lastViaX = request.preferredX + radius
+                val viaCandidates = if (firstViaX == lastViaX) intArrayOf(firstViaX) else intArrayOf(firstViaX, lastViaX)
+                for (viaX in viaCandidates) {
+                    if (viaX < 0) continue
+                    if ((0 until tierCount).any { tier ->
+                            blockedViaColumnsWithIsolation[viaX + tier * GLOBAL_TIER_VIA_PITCH]
                         }
+                    ) {
+                        continue
                     }
-                    .flatMap { viaX ->
-                        val trunkCandidates = if (folded) {
-                            sequenceOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
-                        } else if (request.sinkRows.size == 1) {
-                            sequenceOf(viaX, viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
-                        } else {
-                            sequenceOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
-                        }
-                        trunkCandidates.filter { it >= 0 }
-                            .map { trunkX ->
-                                GlobalTrack(
-                                    request.signal,
-                                    request.ordinal,
-                                    request.driverRow,
-                                    request.sinkKeys,
-                                    request.sinkRows,
-                                    trunkX,
-                                    viaX,
-                                    planeY,
-                                    tierCount,
-                                )
-                            }
+                    val trunkCandidates = when {
+                        folded -> intArrayOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
+                        request.sinkRows.size == 1 ->
+                            intArrayOf(viaX, viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
+                        else -> intArrayOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
                     }
-                    .filter { candidate ->
-                        tracks.none { placed ->
-                            (folded || rowSpansOverlap(candidate.rowSpan, placed.rowSpan)) &&
-                                    candidate.footprint.conflicts(placed.footprint, technology.isolation)
-                        }
+                    for (trunkX in trunkCandidates) {
+                        if (trunkX < 0) continue
+                        val candidate = GlobalTrack(
+                            request.signal,
+                            request.ordinal,
+                            request.driverRow,
+                            request.sinkKeys,
+                            request.sinkRows,
+                            trunkX,
+                            viaX,
+                            planeY,
+                            tierCount,
+                        )
+                        if (occupied.conflicts(candidate.rowSpan, candidate.footprint)) continue
+                        val current = chosen
+                        if (current == null || candidateOrder.compare(candidate, current) < 0) chosen = candidate
                     }
-                    .minWithOrNull(
-                        compareBy<GlobalTrack>(
-                            { abs(it.viaX - request.preferredX) },
-                            { abs(it.trunkX - it.viaX) },
-                            { maxOf(it.trunkX, it.viaX) >= cellWidth },
-                            { maxOf(it.trunkX, it.viaX) },
-                            { it.trunkX },
-                        ),
-                    )
+                }
                 radius++
             }
             tracks += chosen
+            occupied.add(chosen.rowSpan, chosen.footprint)
         }
         return tracks
     }
-
-    private fun rowSpansOverlap(left: IntRange, right: IntRange): Boolean =
-        left.first <= right.last + GLOBAL_ROW_GUARD && right.first <= left.last + GLOBAL_ROW_GUARD
 
     private fun assignLanes(routes: List<LocalRouteDraft>): List<LocalRouteDraft> {
         val laneSpans = mutableListOf<MutableList<IntRange>>()
