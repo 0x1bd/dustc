@@ -24,6 +24,7 @@ internal class PhysicalFloorplanner(
         tierCount: Int,
         viaPolicy: ViaPolicy,
         reserveIoSigns: Boolean,
+        exactRouting: Boolean = true,
     ): Floorplan {
         require(partitions.size == tierAssignment.size)
         val activeCellHeight = partitions.flatten().maxOf { it.cell.size.y }
@@ -306,7 +307,11 @@ internal class PhysicalFloorplanner(
 
         val criticality = signalCriticality(netlist)
         val timingCost = globalSignals.sumOf { criticality[it.index].toLong() }
-        val (routing, routeDelays) = router.routingEvaluation(rows, globalTracks, netlist.clockSignals)
+        val (routing, routeDelays) = if (exactRouting) {
+            router.routingEvaluation(rows, globalTracks, netlist.clockSignals)
+        } else {
+            router.routingEstimate(rows, globalTracks, netlist.clockSignals)
+        }
         val placedConnections = connections(cells)
         val clockSkew = netlist.clockSignals.maxOfOrNull { signal ->
             val arrivals = placedConnections.getValue(signal).mapNotNull { connected ->

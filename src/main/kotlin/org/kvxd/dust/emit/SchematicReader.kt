@@ -28,7 +28,10 @@ class SchematicReader {
         val data = body.getByteArray("BlockData")
         val matrix = BlockMatrix(width, height, length)
         var cursor = 0
-        matrix.forEachPosition { x, y, z, _ ->
+        var x = 0
+        var y = 0
+        var z = 0
+        repeat(matrix.volume) {
             var value = 0
             var shift = 0
             do {
@@ -36,7 +39,17 @@ class SchematicReader {
                 value = value or ((byte and 127) shl shift)
                 shift += 7
             } while (byte and 128 != 0)
-            matrix[x, y, z] = checkNotNull(palette[value])
+            val state = checkNotNull(palette[value])
+            if (!state.isAir) matrix[x, y, z] = state
+            x++
+            if (x == width) {
+                x = 0
+                z++
+                if (z == length) {
+                    z = 0
+                    y++
+                }
+            }
         }
         require(cursor == data.size) { "schematic contains trailing block data" }
         body.getList("BlockEntities", BinaryTagTypes.COMPOUND).forEach { raw ->

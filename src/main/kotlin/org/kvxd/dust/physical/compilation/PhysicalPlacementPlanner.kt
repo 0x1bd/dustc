@@ -89,7 +89,8 @@ internal class PhysicalPlacementPlanner(
                                 assignment,
                                 tierCount,
                                 ViaPolicy.STAIRS,
-                                reserveIoSigns
+                                reserveIoSigns,
+                                exactRouting = false,
                             ),
                             partitions,
                             assignment,
@@ -117,7 +118,29 @@ internal class PhysicalPlacementPlanner(
             "no feasible floorplan for ${specs.size} cells" +
                 (lastGeometryFailure?.message?.let { ": $it" } ?: "")
         }
-        val selected = plans.minWith(compareByFloorplanCandidate())
+        val exactPlans = mutableListOf<FloorplanCandidate>()
+        for (candidate in plans.sortedWith(compareByFloorplanCandidate())) {
+            try {
+                exactPlans += candidate.copy(
+                    plan = floorplanner.floorplan(
+                        netlist,
+                        candidate.partitions,
+                        candidate.assignment,
+                        candidate.tierCount,
+                        ViaPolicy.STAIRS,
+                        reserveIoSigns,
+                    ),
+                )
+            } catch (cause: CandidateGeometryException) {
+                lastGeometryFailure = cause
+            }
+            if (exactPlans.size == EXACT_ROUTING_FINALISTS) break
+        }
+        require(exactPlans.isNotEmpty()) {
+            "no electrically feasible floorplan for ${specs.size} cells" +
+                (lastGeometryFailure?.message?.let { ": $it" } ?: "")
+        }
+        val selected = exactPlans.minWith(compareByFloorplanCandidate())
         if (specs.size > UPWARD_GLASS_PLACEMENT_GATE_LIMIT) {
             val glass = try {
                 floorplanner.floorplan(
@@ -138,7 +161,7 @@ internal class PhysicalPlacementPlanner(
             return FloorplanSelection(final.plan, final.candidate, candidates.size)
         }
         val finalists = mutableListOf(selected)
-        for (candidate in plans.sortedWith(compareByFloorplanCandidate()).take(UPWARD_GLASS_CANDIDATES)) {
+        for (candidate in exactPlans.take(UPWARD_GLASS_CANDIDATES)) {
             try {
                 finalists += candidate.copy(
                     plan = floorplanner.floorplan(

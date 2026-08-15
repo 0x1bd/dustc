@@ -49,8 +49,8 @@ object RouterHarness {
                     }
                 }
             }
-        design.matrix.forEachPosition { x, y, z, state ->
-            if (org.kvxd.dust.device.geometry.BlockPos(x, y, z) in interfaceNodes) return@forEachPosition
+        design.matrix.forEachOccupiedPosition { position, state ->
+            if (position in interfaceNodes) return@forEachOccupiedPosition
             when (state.type.component) {
                 ComponentKind.REPEATER -> repeaters++
                 ComponentKind.TORCH -> torches++

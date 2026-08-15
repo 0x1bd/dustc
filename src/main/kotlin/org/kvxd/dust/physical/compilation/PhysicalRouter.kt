@@ -140,6 +140,16 @@ internal class PhysicalRouter(
         return RoutingCost(sink.repeaters, sink.blocks) to delays
     }
 
+    internal fun routingEstimate(
+        rows: List<PlacedRow>,
+        globalTracks: List<GlobalTrack>,
+        clockSignals: Set<Signal> = emptySet(),
+    ): Pair<RoutingCost, Map<BlockPos, Int>> {
+        val sink = EstimatingSink()
+        val delays = route(rows, globalTracks, sink, clockSignals).pinTicks
+        return RoutingCost(sink.repeaters, sink.blocks) to delays
+    }
+
     private fun placeGlobalRun(sink: RouteSink, run: GlobalRun, log: DelayLog) {
         val assigned = run.taps.groupBy { tap ->
             run.starts.minWith(compareBy<GlobalStart>({ abs(it.z - tap.z) }, { it.sense.ordinal }))
@@ -922,6 +932,18 @@ internal class PhysicalRouter(
                     )
                 }
             }
+            blocks++
+            if (state.type.component == ComponentKind.REPEATER) repeaters++
+        }
+    }
+
+    private class EstimatingSink : RouteSink {
+        var repeaters: Long = 0
+            private set
+        var blocks: Long = 0
+            private set
+
+        override fun place(pos: BlockPos, state: BlockState, support: BlockState, signal: Signal) {
             blocks++
             if (state.type.component == ComponentKind.REPEATER) repeaters++
         }

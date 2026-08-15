@@ -18,12 +18,10 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
     private val height = matrix.height
     private val length = matrix.length
 
-    private val states = Array(matrix.volume) { index ->
-        matrix[index % width, index / (width * length), (index / width) % length]
-    }
+    private val states = matrix.copy()
 
     private val pending = ArrayList<PendingTick>()
-    private val analogOutputs = IntArray(matrix.volume)
+    private val analogOutputs = HashMap<Int, Int>()
     private var sequence = 0L
 
     private var currentTick = 0
@@ -33,13 +31,10 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
     private val world = object : org.kvxd.dust.device.block.BlockAccess {
         override fun blockAt(pos: BlockPos): BlockState = stateAt(pos)
         override fun blockEntityAt(pos: BlockPos) = matrix.blockEntityAt(pos)
-        override fun analogOutputAt(pos: BlockPos): Int? = toLocal(pos)?.let { analogOutputs[it] }
+        override fun analogOutputAt(pos: BlockPos): Int? = toLocal(pos)?.let { analogOutputs[it] ?: 0 }
     }
 
-    fun stateAt(pos: BlockPos): BlockState {
-        val local = toLocal(pos) ?: return BlockState.AIR
-        return stateAt(local)
-    }
+    fun stateAt(pos: BlockPos): BlockState = states.blockAt(pos)
 
     fun settle(maxTicks: Int) {
         forEachActivePosition { pos -> update(pos) }
@@ -176,7 +171,7 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
             ComponentKind.WIRE -> state[Properties.POWER]
             ComponentKind.TORCH -> if (state[Properties.LIT]) Redstone.maximumSignalStrength else 0
             ComponentKind.REPEATER -> if (state[Properties.POWERED]) Redstone.maximumSignalStrength else 0
-            ComponentKind.COMPARATOR -> toLocal(pos)?.let { analogOutputs[it] } ?: 0
+            ComponentKind.COMPARATOR -> toLocal(pos)?.let { analogOutputs[it] ?: 0 } ?: 0
             ComponentKind.LEVER -> if (state[Properties.POWERED]) Redstone.maximumSignalStrength else 0
             else -> 0
         }
@@ -290,8 +285,8 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
     private fun commitComparator(pos: BlockPos, state: BlockState) {
         val output = Redstone.comparatorOutput(world, pos)
         val index = toLocal(pos) ?: return
-        if (analogOutputs[index] == output) return
-        analogOutputs[index] = output
+        if ((analogOutputs[index] ?: 0) == output) return
+        if (output == 0) analogOutputs.remove(index) else analogOutputs[index] = output
         setBlockRaw(pos, state.with(Properties.POWERED, output > 0))
         updateAround(pos)
     }
@@ -315,14 +310,10 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
     }
 
     private fun setBlockRaw(pos: BlockPos, state: BlockState) {
-        toLocal(pos)?.let { setState(it, state) }
+        if (states.contains(pos)) states.setBlockAt(pos, state)
     }
 
-    private fun stateAt(index: Int): BlockState = states[index]
-
-    private fun setState(index: Int, state: BlockState) {
-        states[index] = state
-    }
+    private fun stateAt(index: Int): BlockState = states.blockAt(fromLocal(index))
 
     private fun updateAround(pos: BlockPos) {
         for (side in Direction.ALL) {
@@ -358,10 +349,6 @@ class GateLevelSimulator(private val matrix: BlockMatrix) {
     }
 
     private fun forEachActivePosition(action: (BlockPos) -> Unit) {
-        for (y in 0 until height) {
-            for (z in 0 until length) {
-                for (x in 0 until width) action(BlockPos(x, y, z))
-            }
-        }
+        states.forEachOccupiedPosition { position, _ -> action(position) }
     }
 }

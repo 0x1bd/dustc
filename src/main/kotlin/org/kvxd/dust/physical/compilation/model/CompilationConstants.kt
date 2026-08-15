@@ -13,6 +13,7 @@ internal const val TIER_NEAR_WEIGHT = 8
 internal const val EDGE_CELL_MARGIN = 4
 internal const val UPWARD_GLASS_CANDIDATES = 3
 internal const val UPWARD_GLASS_PLACEMENT_GATE_LIMIT = 128
+internal const val EXACT_ROUTING_FINALISTS = 3
 internal const val ROUTING_SELECTION_WEIGHT = 100L
 internal const val MAX_DIMENSION_SELECTION_WEIGHT = 600L
 internal const val AREA_SELECTION_WEIGHT = 5L

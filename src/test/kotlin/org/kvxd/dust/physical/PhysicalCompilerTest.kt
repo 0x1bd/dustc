@@ -433,7 +433,7 @@ class PhysicalCompilerTest {
             output("y", not(a))
         }
         val design = PhysicalCompiler().compile(netlist, PhysicalIo.TERMINALS)
-        design.matrix.forEachPosition { _, _, _, state ->
+        design.matrix.forEachOccupiedPosition { _, _, _, state ->
             assertTrue(state.type != BlockType.LEVER)
             assertTrue(state.type != BlockType.REDSTONE_LAMP)
         }

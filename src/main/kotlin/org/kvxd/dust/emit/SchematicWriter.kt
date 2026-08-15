@@ -6,6 +6,7 @@ import net.kyori.adventure.nbt.CompoundBinaryTag
 import net.kyori.adventure.nbt.ListBinaryTag
 import net.kyori.adventure.nbt.StringBinaryTag
 import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.block.BlockState
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.block.ContainerBlockEntity
 import org.kvxd.dust.device.block.ItemStack
@@ -15,10 +16,13 @@ import java.util.AbstractMap
 
 class SchematicWriter {
     fun write(matrix: BlockMatrix, name: String): ByteArray {
-        val palette = LinkedHashMap<String, Int>()
+        val palette = linkedMapOf(BlockState.AIR.toString() to 0)
+        val occupiedStates = mutableSetOf<String>()
+        matrix.forEachOccupiedPosition { _, _, _, state -> occupiedStates += state.toString() }
+        occupiedStates.minus(palette.keys).sorted().forEach { state -> palette[state] = palette.size }
         val data = ByteArrayOutputStream(matrix.volume)
         matrix.forEachPosition { _, _, _, state ->
-            writeVarInt(data, palette.getOrPut(state.toString()) { palette.size })
+            writeVarInt(data, palette.getValue(state.toString()))
         }
 
         val paletteTag = CompoundBinaryTag.builder().apply {
