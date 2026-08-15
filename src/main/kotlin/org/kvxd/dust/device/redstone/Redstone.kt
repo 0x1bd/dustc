@@ -18,6 +18,7 @@ object Redstone {
         return when (state.type) {
             BlockType.REDSTONE_WALL_TORCH ->
                 if (state[Properties.LIT] && state[Properties.FACING] != side) maximumSignalStrength else 0
+            BlockType.REDSTONE_TORCH -> if (state[Properties.LIT] && side != Direction.UP) maximumSignalStrength else 0
             BlockType.LEVER -> if (state[Properties.POWERED]) maximumSignalStrength else 0
             BlockType.REPEATER ->
                 if (state[Properties.FACING] == side && state[Properties.POWERED]) maximumSignalStrength else 0
@@ -35,7 +36,7 @@ object Redstone {
     fun strongPower(access: BlockAccess, pos: BlockPos, side: Direction, dustPower: Boolean = true): Int {
         val state = access.blockAt(pos)
         return when (state.type) {
-            BlockType.REDSTONE_WALL_TORCH ->
+            BlockType.REDSTONE_WALL_TORCH, BlockType.REDSTONE_TORCH ->
                 if (state[Properties.LIT] && side == Direction.DOWN) maximumSignalStrength else 0
             BlockType.LEVER -> {
                 val attached = when (side) {
@@ -72,7 +73,7 @@ object Redstone {
             direct = maxOf(direct, redstonePower(access, neighbourPos, side, dustPower = false))
             wire = maxOf(wire, wireStrength(access, neighbourPos))
             if (side.isHorizontal) {
-                if (!above.type.isSolid && !neighbour.type.isTransparent) {
+                if ((!above.type.isSolid || above.type.isTransparent) && !neighbour.type.isTransparent) {
                     wire = maxOf(wire, wireStrength(access, neighbourPos.offset(Direction.UP)))
                 }
                 if (!neighbour.type.isSolid || neighbour.type.isTransparent) {
@@ -88,7 +89,9 @@ object Redstone {
         val neighbour = access.blockAt(neighbourPos)
         if (canConnectTo(neighbour, side)) return WireConnection.SIDE
         val above = access.blockAt(pos.offset(Direction.UP))
-        if (!above.type.isSolid && access.blockAt(neighbourPos.offset(Direction.UP)).type == BlockType.REDSTONE_WIRE) {
+        if ((!above.type.isSolid || above.type.isTransparent) &&
+            access.blockAt(neighbourPos.offset(Direction.UP)).type == BlockType.REDSTONE_WIRE
+        ) {
             return WireConnection.UP
         }
         if (!neighbour.type.isSolid && access.blockAt(neighbourPos.offset(Direction.DOWN)).type == BlockType.REDSTONE_WIRE) {
@@ -116,7 +119,7 @@ object Redstone {
     }
 
     fun canConnectTo(state: BlockState, side: Direction): Boolean = when (state.type) {
-        BlockType.REDSTONE_WIRE, BlockType.REDSTONE_WALL_TORCH, BlockType.LEVER -> true
+        BlockType.REDSTONE_WIRE, BlockType.REDSTONE_WALL_TORCH, BlockType.REDSTONE_TORCH, BlockType.LEVER -> true
         BlockType.REPEATER, BlockType.COMPARATOR ->
             state[Properties.FACING] == side || state[Properties.FACING] == side.opposite
         else -> false
@@ -124,11 +127,14 @@ object Redstone {
 
     fun anyTorchShouldBeOff(access: BlockAccess, pos: BlockPos): Boolean {
         val state = access.blockAt(pos)
-        if (state.type != BlockType.REDSTONE_WALL_TORCH) return false
-        val facing = state[Properties.FACING]
-        val supportPos = pos.offset(facing.opposite)
+        val supportDirection = when (state.type) {
+            BlockType.REDSTONE_WALL_TORCH -> state[Properties.FACING].opposite
+            BlockType.REDSTONE_TORCH -> Direction.DOWN
+            else -> return false
+        }
+        val supportPos = pos.offset(supportDirection)
         if (!access.blockAt(supportPos).type.isSolid) return false
-        return redstonePower(access, supportPos, facing.opposite) > 0
+        return redstonePower(access, supportPos, supportDirection) > 0
     }
 
     fun lampShouldBeLit(access: BlockAccess, pos: BlockPos): Boolean =
@@ -174,7 +180,8 @@ object Redstone {
 
     private fun repeaterLockPower(access: BlockAccess, pos: BlockPos, side: Direction): Int {
         val sidePos = pos.offset(side)
-        return if (access.blockAt(sidePos).type == BlockType.REPEATER) {
+        val sideType = access.blockAt(sidePos).type
+        return if (sideType == BlockType.REPEATER || sideType == BlockType.COMPARATOR) {
             weakPower(access, sidePos, side, dustPower = false)
         } else {
             0

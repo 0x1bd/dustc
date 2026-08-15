@@ -1,15 +1,15 @@
 package org.kvxd.dust.technology
 
-import org.kvxd.dust.device.block.BlockMatrix
-import org.kvxd.dust.device.block.BlockState
-import org.kvxd.dust.device.geometry.BlockPos
-import org.kvxd.dust.device.geometry.Direction
 import org.kvxd.dust.cell.library.BuiltinCells
 import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.cell.library.CellProvider
 import org.kvxd.dust.cell.library.ClockCell
 import org.kvxd.dust.cell.library.DisplayMatrixCell
 import org.kvxd.dust.cell.library.DisplayPixelCell
+import org.kvxd.dust.device.block.BlockMatrix
+import org.kvxd.dust.device.block.BlockState
+import org.kvxd.dust.device.geometry.BlockPos
+import org.kvxd.dust.device.geometry.Direction
 import org.kvxd.dust.technology.definition.CellDefinitionLoader
 
 object MinecraftRedstone {
@@ -51,6 +51,7 @@ object MinecraftRedstone {
             "repeater-south-2" to RedstoneBlocks.repeater(Direction.SOUTH, delay = 2),
             "repeater-south-3" to RedstoneBlocks.repeater(Direction.SOUTH, delay = 3),
             "repeater-south-4" to RedstoneBlocks.repeater(Direction.SOUTH, delay = 4),
+            "repeater-west" to RedstoneBlocks.repeater(Direction.WEST),
             "comparator-north-subtract" to RedstoneBlocks.comparator(
                 Direction.NORTH,
                 org.kvxd.dust.device.redstone.ComparatorMode.SUBTRACT,

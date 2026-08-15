@@ -8,8 +8,11 @@ class Circuit internal constructor(
     private val netlist: BooleanNetlist,
 ) {
     val inputs: List<CircuitPort> = ports.filter { it.direction == CircuitPortDirection.INPUT }
-    val outputs: List<CircuitPort> = ports.filter { it.direction == CircuitPortDirection.OUTPUT }
-    val ioGroups: List<CircuitIoGroup> = ports
+    val outputs: List<CircuitPort> = ports.filter {
+        it.direction == CircuitPortDirection.OUTPUT && it.display == null
+    }
+    val displayOutputs: List<CircuitPort> = ports.filter { it.display != null }
+    val ioGroups: List<CircuitIoGroup> = ports.filter { it.display == null }
         .groupBy { port -> Triple(port.direction, port.ioGroup, port.edge to port.panel) }
         .map { (key, groupedPorts) -> CircuitIoGroup(key.second, key.first, groupedPorts, key.third.first, key.third.second) }
 

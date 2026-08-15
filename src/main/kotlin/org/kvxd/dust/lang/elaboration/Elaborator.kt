@@ -3,6 +3,7 @@ package org.kvxd.dust.lang.elaboration
 import org.kvxd.dust.Circuit
 import org.kvxd.dust.CircuitPort
 import org.kvxd.dust.CircuitPortDirection
+import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.cell.definition.PortDirection as CellPortDirection
 import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.lang.MAX_BUS_WIDTH
@@ -16,6 +17,7 @@ import org.kvxd.dust.lang.syntax.BinarySyntax
 import org.kvxd.dust.lang.syntax.BlockSyntax
 import org.kvxd.dust.lang.syntax.BooleanSyntax
 import org.kvxd.dust.lang.syntax.CallSyntax
+import org.kvxd.dust.lang.syntax.DisplayPortTypeSyntax
 import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
 import org.kvxd.dust.lang.syntax.IfSyntax
@@ -25,6 +27,7 @@ import org.kvxd.dust.lang.syntax.ModuleSyntax
 import org.kvxd.dust.lang.syntax.NameSyntax
 import org.kvxd.dust.lang.syntax.PortDirection
 import org.kvxd.dust.lang.syntax.PortSyntax
+import org.kvxd.dust.lang.syntax.SignalPortTypeSyntax
 import org.kvxd.dust.lang.syntax.StatementSyntax
 import org.kvxd.dust.lang.syntax.UnarySyntax
 import org.kvxd.dust.lang.syntax.VariableSyntax
@@ -88,11 +91,16 @@ internal class Elaborator(
             applyTerminalPlacement = true,
         )
         ports.filter { it.direction == CircuitPortDirection.OUTPUT }.forEach { port ->
-            val signals = (outputs.getValue(port.name) as Value.Signals).signals
-            if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(
-                port.name,
-                signals
-            )
+            val value = outputs.getValue(port.name)
+            if (port.display != null) {
+                attachDisplayOutput(builder, port.name, port.display, displayWrite(value, module.location))
+            } else {
+                val signals = signals(value, module.location)
+                if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(
+                    port.name,
+                    signals,
+                )
+            }
         }
         val netlist = try {
             builder.build()
@@ -122,6 +130,14 @@ internal class Elaborator(
                         "#[panel] currently supports north/south edges; omit #[edge] for automatic panel placement"
                     )
                 }
+                if (resolved.display != null) {
+                    if (placement.edge != null && placement.edge != InterfaceEdge.NORTH) {
+                        fail(port.location, "a display output faces the north edge")
+                    }
+                    if (placement.panel || placement.tier != null || placement.near.isNotEmpty()) {
+                        fail(port.location, "display output placement is automatic")
+                    }
+                }
                 CircuitPort(
                     port.name,
                     resolved.width,
@@ -131,8 +147,13 @@ internal class Elaborator(
                         CircuitPortDirection.OUTPUT
                     },
                     port.group,
-                    placement.edge?.let { PhysicalIoEdge.valueOf(it.name) },
+                    if (resolved.display != null) {
+                        PhysicalIoEdge.NORTH
+                    } else {
+                        placement.edge?.let { PhysicalIoEdge.valueOf(it.name) }
+                    },
                     placement.panel,
+                    resolved.display,
                 )
             } catch (exception: IllegalArgumentException) {
                 fail(port.location, exception.message ?: "invalid port")
@@ -168,18 +189,23 @@ internal class Elaborator(
             }
         val outputPorts = module.ports.filter { it.syntax.direction == PortDirection.OUTPUT }
         val outputs = outputPorts.associate { port ->
-            port.syntax.name to OutputBinding(port.syntax, MutableList(port.width) { null })
+            port.syntax.name to OutputBinding(port, MutableList(port.width) { null })
         }
         execute(module.syntax.body, environment, outputs, builder, callStack)
         val result = outputs.mapValues { (_, output) ->
             val missing = output.signals.indices.filter { output.signals[it] == null }
             if (missing.isNotEmpty()) {
                 val names = missing.joinToString { bit ->
-                    if (output.signals.size == 1) output.port.name else "${output.port.name}[$bit]"
+                    if (output.signals.size == 1) {
+                        output.port.syntax.name
+                    } else {
+                        "${output.port.syntax.name}[$bit]"
+                    }
                 }
-                fail(output.port.location, "unassigned output $names")
+                fail(output.port.syntax.location, "unassigned output $names")
             }
-            Value.Signals(output.signals.map(::checkNotNull))
+            val signals = output.signals.map(::checkNotNull)
+            output.displayWrite?.copy(signals = signals) ?: Value.Signals(signals)
         }
         if (applyTerminalPlacement) applyPortPlacement(module.syntax, builder, inputs + result)
         return result
@@ -354,14 +380,39 @@ internal class Elaborator(
     }
 
     private fun connect(output: OutputBinding, index: Int?, value: Value, location: Token) {
-        val signals = (value as? Value.Signals)?.signals ?: fail(location, "an output needs a bit value")
+        val signals = when (value) {
+            is Value.Signals -> {
+                if (output.port.display != null) {
+                    fail(location, "display output '${output.port.syntax.name}' needs display_write(...)")
+                }
+                value.signals
+            }
+
+            is Value.DisplayWrite -> {
+                val display = output.port.display
+                    ?: fail(location, "display_write(...) can only be assigned to a display output")
+                if (index != null) fail(location, "a display output cannot be assigned by bit")
+                val expectedX = clog2(display.width)
+                val expectedY = clog2(display.height)
+                if (value.xWidth != expectedX || value.yWidth != expectedY) {
+                    fail(
+                        location,
+                        "display<${display.width}, ${display.height}> needs ${expectedX}-bit x and ${expectedY}-bit y coordinates",
+                    )
+                }
+                output.displayWrite = value
+                value.signals
+            }
+
+            else -> fail(location, "an output needs a bit value")
+        }
         if (index == null) {
             if (signals.size != output.signals.size) {
-                fail(location, "${output.port.name} needs ${output.signals.size} bits, got ${signals.size}")
+                fail(location, "${output.port.syntax.name} needs ${output.signals.size} bits, got ${signals.size}")
             }
             signals.forEachIndexed { bit, signal -> connectBit(output, bit, signal, location) }
         } else {
-            if (index !in output.signals.indices) fail(location, "${output.port.name} has no bit $index")
+            if (index !in output.signals.indices) fail(location, "${output.port.syntax.name} has no bit $index")
             if (signals.size != 1) fail(location, "a bus cannot be assigned to one output bit")
             connectBit(output, index, signals.single(), location)
         }
@@ -369,7 +420,11 @@ internal class Elaborator(
 
     private fun connectBit(output: OutputBinding, bit: Int, signal: Signal, location: Token) {
         if (output.signals[bit] != null) {
-            val name = if (output.signals.size == 1) output.port.name else "${output.port.name}[$bit]"
+            val name = if (output.signals.size == 1) {
+                output.port.syntax.name
+            } else {
+                "${output.port.syntax.name}[$bit]"
+            }
             fail(location, "$name is already assigned")
         }
         output.signals[bit] = signal
@@ -467,6 +522,52 @@ internal class Elaborator(
                 }
                 return Value.Signals(
                     List(width) { bit -> builder.constant(bit < Int.SIZE_BITS && value and (1 shl bit) != 0) },
+                )
+            }
+
+            "decode" -> {
+                if (call.parameters.size != 1 || call.arguments.size != 1) {
+                    fail(call.location, "decode<N>(value) expects one output width and one address")
+                }
+                val width = integer(call.parameters.single(), environment, outputs, builder, callStack)
+                if (width !in 2..ULong.SIZE_BITS) {
+                    fail(call.parameters.single().location, "decoder width must be between 2 and ${ULong.SIZE_BITS}")
+                }
+                val address = signals(
+                    evaluate(call.arguments.single(), environment, outputs, builder, callStack),
+                    call.arguments.single().location,
+                )
+                val addressWidth = Int.SIZE_BITS - Integer.numberOfLeadingZeros(width - 1)
+                if (address.size != addressWidth) {
+                    fail(
+                        call.arguments.single().location,
+                        "decode<$width> needs a $addressWidth-bit address, got ${address.size} bits",
+                    )
+                }
+                val inverted = address.map(builder::not)
+                return Value.Signals(
+                    List(width) { decoded ->
+                        address.indices.map { bit ->
+                            if (decoded and (1 shl bit) == 0) inverted[bit] else address[bit]
+                        }.reduce(builder::and)
+                    },
+                )
+            }
+
+            "display_write" -> {
+                if (call.parameters.isNotEmpty() || call.arguments.size != 5) {
+                    fail(call.location, "display_write(x, y, value, plot, plot_all) expects five arguments")
+                }
+                val arguments = call.arguments.map { argument ->
+                    signals(evaluate(argument, environment, outputs, builder, callStack), argument.location)
+                }
+                if (arguments.drop(2).any { it.size != 1 }) {
+                    fail(call.location, "display_write value, plot, and plot_all inputs must be bits")
+                }
+                return Value.DisplayWrite(
+                    arguments.flatten(),
+                    xWidth = arguments[0].size,
+                    yWidth = arguments[1].size,
                 )
             }
 
@@ -582,6 +683,54 @@ internal class Elaborator(
         )
     }
 
+    private fun attachDisplayOutput(
+        builder: BooleanNetlistBuilder,
+        name: String,
+        dimensions: DisplayDimensions,
+        write: Value.DisplayWrite,
+    ) {
+        val xEnd = write.xWidth
+        val yEnd = xEnd + write.yWidth
+        val x = write.signals.subList(0, xEnd)
+        val y = write.signals.subList(xEnd, yEnd)
+        val value = write.signals[yEnd]
+        val plot = write.signals[yEnd + 1]
+        val plotAll = write.signals[yEnd + 2]
+        val selectedColumns = decode(builder, dimensions.width, x)
+        val selectedRows = decode(builder, dimensions.height, y)
+        val writableRows = selectedRows.map { selectedRow -> builder.and(plot, selectedRow) }
+        val pixels = writableRows.flatMap { writableRow ->
+            selectedColumns.map { selectedColumn ->
+                val writePixel = builder.or(plotAll, builder.and(selectedColumn, writableRow))
+                builder.latch(value, builder.not(writePixel))
+            }
+        }
+        val cell = try {
+            cellLibrary.specialize("display_matrix", listOf(dimensions.width, dimensions.height))
+        } catch (exception: IllegalArgumentException) {
+            error(exception.message ?: "invalid display specialization")
+        }
+        builder.instance(
+            cell.logicalType,
+            mapOf("pixels" to pixels),
+            name = "output-$name",
+        )
+    }
+
+    private fun decode(builder: BooleanNetlistBuilder, width: Int, address: List<Signal>): List<Signal> {
+        val inverted = address.map(builder::not)
+        return List(width) { decoded ->
+            address.indices.map { bit ->
+                if (decoded and (1 shl bit) == 0) inverted[bit] else address[bit]
+            }.reduce(builder::and)
+        }
+    }
+
+    private fun displayWrite(value: Value, location: Token): Value.DisplayWrite =
+        value as? Value.DisplayWrite ?: fail(location, "a display output needs display_write(...)")
+
+    private fun clog2(value: Int): Int = Int.SIZE_BITS - Integer.numberOfLeadingZeros(value - 1)
+
     private fun unary(
         expression: UnarySyntax,
         environment: Environment,
@@ -674,11 +823,34 @@ internal class Elaborator(
         val key = SpecializationKey(module.name, module.parameters.map { arguments.getValue(it.name) })
         return specializations.getOrPut(key) {
             val ports = module.ports.map { port ->
-                val width = constantInteger(port.width, arguments)
-                if (width !in 1..MAX_BUS_WIDTH) {
-                    fail(port.width.location, "bus width must be between 1 and $MAX_BUS_WIDTH, got $width")
+                when (val type = port.type) {
+                    is SignalPortTypeSyntax -> {
+                        val width = constantInteger(type.width, arguments)
+                        if (width !in 1..MAX_BUS_WIDTH) {
+                            fail(type.width.location, "bus width must be between 1 and $MAX_BUS_WIDTH, got $width")
+                        }
+                        ResolvedPort(port, width, display = null)
+                    }
+
+                    is DisplayPortTypeSyntax -> {
+                        if (port.direction != PortDirection.OUTPUT) {
+                            fail(port.location, "a display must be an output")
+                        }
+                        val display = try {
+                            DisplayDimensions(
+                                constantInteger(type.width, arguments),
+                                constantInteger(type.height, arguments),
+                            )
+                        } catch (exception: IllegalArgumentException) {
+                            fail(type.location, exception.message ?: "invalid display dimensions")
+                        }
+                        ResolvedPort(
+                            port,
+                            clog2(display.width) + clog2(display.height) + DISPLAY_CONTROL_BITS,
+                            display,
+                        )
+                    }
                 }
-                ResolvedPort(port, width)
             }
             SpecializedModule(module, arguments.toMap(), ports, key)
         }
@@ -828,6 +1000,7 @@ internal class Elaborator(
 
     private fun placementSignals(value: Value, location: Token): List<Signal> = when (value) {
         is Value.Signals -> value.signals
+        is Value.DisplayWrite -> value.signals
         is Value.Bundle -> value.outputs.values.flatMap { placementSignals(it, location) }
         is Value.Integer -> fail(location, "placement attributes require a signal, bus, or module output bundle")
     }
@@ -862,6 +1035,7 @@ internal class Elaborator(
 
     private sealed interface Value {
         data class Signals(val signals: List<Signal>) : Value
+        data class DisplayWrite(val signals: List<Signal>, val xWidth: Int, val yWidth: Int) : Value
         data class Bundle(val outputs: Map<String, Value>) : Value
         data class Integer(val value: Int) : Value
     }
@@ -874,9 +1048,17 @@ internal class Elaborator(
     )
 
     private data class Binding(var value: Value, val mutable: Boolean)
-    private data class OutputBinding(val port: PortSyntax, val signals: MutableList<Signal?>)
+    private data class OutputBinding(
+        val port: ResolvedPort,
+        val signals: MutableList<Signal?>,
+        var displayWrite: Value.DisplayWrite? = null,
+    )
 
-    private data class ResolvedPort(val syntax: PortSyntax, val width: Int)
+    private data class ResolvedPort(
+        val syntax: PortSyntax,
+        val width: Int,
+        val display: DisplayDimensions?,
+    )
 
     private data class SpecializedModule(
         val syntax: ModuleSyntax,
@@ -900,6 +1082,7 @@ internal class Elaborator(
     private class ElaborationError : RuntimeException()
 
     private companion object {
+        const val DISPLAY_CONTROL_BITS: Int = 3
         val STORAGE_INTRINSICS = setOf("register", "enabled_register", "resettable_register")
         val INTEGER_OPERATORS = setOf(
             TokenType.PLUS,

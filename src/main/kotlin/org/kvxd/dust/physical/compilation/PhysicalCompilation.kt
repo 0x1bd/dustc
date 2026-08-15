@@ -39,8 +39,21 @@ internal class PhysicalCompilation(
         val matrix = BlockMatrix(plan.width, plan.height, plan.length)
         plan.cells.forEach { technology.placeCell(matrix, it.cell, it.origin) }
         val sink = router.MatrixSink(matrix)
-        val unbalancedDelays = router.measureDelays(plan.rows, plan.globalTracks, netlist.clockSignals)
-        val clockPadding = clockPadding(plan.cells, unbalancedDelays)
+        val clockPadding = mutableMapOf<BlockPos, Int>()
+        var balancingPass = 0
+        while (balancingPass++ < CLOCK_BALANCING_PASSES) {
+            val measured = router.measureDelays(
+                plan.rows,
+                plan.globalTracks,
+                netlist.clockSignals,
+                clockPadding,
+            )
+            val correction = clockPadding(plan.cells, measured)
+            if (correction.values.maxOrNull() == 0) break
+            correction.forEach { (position, ticks) ->
+                clockPadding[position] = clockPadding.getOrDefault(position, 0) + ticks
+            }
+        }
         val routingWork = router.routeWork(plan.rows, plan.globalTracks)
         progress.onProgress(
             PhysicalProgressEvent(
@@ -131,6 +144,10 @@ internal class PhysicalCompilation(
                 cell.observations.map { (name, position) -> "${cell.name}.$name" to position }
             }.toMap(),
         )
+    }
+
+    private companion object {
+        const val CLOCK_BALANCING_PASSES: Int = 8
     }
 
 }

@@ -226,12 +226,12 @@ internal class PhysicalPlacementPlanner(
                 flushOrdinary()
             }
         }
-        listOf(InterfaceEdge.NORTH, InterfaceEdge.SOUTH).forEach { edge ->
-            val visible = separated.filter { row -> row.singleOrNull()?.takeIf { it.exclusiveRow }?.forcedEdge == edge }
-            require(visible.size <= 1) { "more than one exclusive hard macro requests the $edge edge" }
+        separated.forEach { row ->
+            val edges = row.mapNotNull { it.forcedEdge }.distinct()
+            require(edges.size <= 1) { "one placement row requests conflicting visible edges $edges" }
         }
         return separated.sortedBy { row ->
-            val edge = row.singleOrNull()?.takeIf { it.exclusiveRow }?.forcedEdge
+            val edge = row.mapNotNull { it.forcedEdge }.distinct().singleOrNull()
             when (edge) {
                 InterfaceEdge.NORTH -> 0
                 InterfaceEdge.SOUTH -> 2

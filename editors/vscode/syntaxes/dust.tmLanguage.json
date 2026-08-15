@@ -114,11 +114,11 @@
     },
     "types": {
       "name": "support.type.primitive.dust",
-      "match": "\\b(bits|bit|int)\\b"
+      "match": "\\b(display|bits|bit|int)\\b"
     },
     "builtins": {
       "name": "support.function.builtin.dust",
-      "match": "\\b(mux|latch|dff|register|enabled_register|resettable_register|clog2|const_bits)\\b(?=\\s*(?:<[^>]*>)?\\s*\\()"
+      "match": "\\b(mux|latch|dff|register|enabled_register|resettable_register|clog2|const_bits|decode|display_write|clock)\\b(?=\\s*(?:<[^>]*>)?\\s*\\()"
     },
     "numbers": {
       "patterns": [
@@ -137,7 +137,7 @@
       ]
     },
     "call": {
-      "match": "\\b(?!(?:module|input|output|let|rec|mut|for|in|if|else|and|or|bit|bits|mux|latch|dff|register|enabled_register|resettable_register)\\b)([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "\\b(?!(?:module|input|output|let|rec|mut|for|in|if|else|and|or|bit|bits|display|mux|latch|dff|register|enabled_register|resettable_register|display_write)\\b)([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
       "captures": {
         "1": { "name": "entity.name.function.call.dust" }
       }

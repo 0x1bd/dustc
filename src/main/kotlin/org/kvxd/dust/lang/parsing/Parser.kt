@@ -12,6 +12,7 @@ import org.kvxd.dust.lang.syntax.BinarySyntax
 import org.kvxd.dust.lang.syntax.BlockSyntax
 import org.kvxd.dust.lang.syntax.BooleanSyntax
 import org.kvxd.dust.lang.syntax.CallSyntax
+import org.kvxd.dust.lang.syntax.DisplayPortTypeSyntax
 import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
 import org.kvxd.dust.lang.syntax.IfSyntax
@@ -22,6 +23,7 @@ import org.kvxd.dust.lang.syntax.ModuleParameterSyntax
 import org.kvxd.dust.lang.syntax.NameSyntax
 import org.kvxd.dust.lang.syntax.PortDirection
 import org.kvxd.dust.lang.syntax.PortSyntax
+import org.kvxd.dust.lang.syntax.SignalPortTypeSyntax
 import org.kvxd.dust.lang.syntax.StatementSyntax
 import org.kvxd.dust.lang.syntax.UnarySyntax
 import org.kvxd.dust.lang.syntax.VariableSyntax
@@ -105,21 +107,30 @@ internal class Parser(
         consume(TokenType.COLON, "expected ':' after port name")
         val type = current()
         val typeName = consumeIdentifier("expected 'bit' or 'bits<width>'")
-        val width = when (typeName) {
-            "bit" -> IntegerSyntax(1, type)
+        val portType = when (typeName) {
+            "bit" -> SignalPortTypeSyntax(IntegerSyntax(1, type), type)
             "bits" -> {
                 consume(TokenType.LESS, "expected '<' before bus width")
                 val value = parseExpression()
                 consume(TokenType.GREATER, "expected '>' after bus width")
-                value
+                SignalPortTypeSyntax(value, type)
+            }
+
+            "display" -> {
+                consume(TokenType.LESS, "expected '<' before display dimensions")
+                val width = parseExpression()
+                consume(TokenType.COMMA, "expected ',' between display dimensions")
+                val height = parseExpression()
+                consume(TokenType.GREATER, "expected '>' after display dimensions")
+                DisplayPortTypeSyntax(width, height, type)
             }
 
             else -> {
                 reporter.error("unknown signal type '$typeName'", type)
-                IntegerSyntax(1, type)
+                SignalPortTypeSyntax(IntegerSyntax(1, type), type)
             }
         }
-        return PortSyntax(direction, nameToken.value, width, group, attributes, nameToken)
+        return PortSyntax(direction, nameToken.value, portType, group, attributes, nameToken)
     }
 
     private fun parseBlock(): BlockSyntax {

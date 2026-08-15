@@ -31,6 +31,9 @@ enum class CellOrientation(private val clockwiseTurns: Int) {
     internal fun state(state: BlockState): BlockState {
         var result = state
         state.getOrNull(Properties.FACING)?.let { result = result.with(Properties.FACING, rotate(it)) }
+        state.getOrNull(Properties.BLOCK_FACING)?.let {
+            result = result.with(Properties.BLOCK_FACING, rotate(it))
+        }
         val wire = Direction.HORIZONTALS.associateWith { direction ->
             state.getOrNull(Properties.wireSide(direction))
         }

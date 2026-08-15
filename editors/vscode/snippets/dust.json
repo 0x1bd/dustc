@@ -77,6 +77,15 @@
     "description": "Generate a repeating clock with a period measured in redstone ticks",
     "body": ["clock<${1:10}>(${2:enabled})"]
   },
+  "Display output": {
+    "prefix": "displayout",
+    "description": "Declare and drive a persistent physical display output",
+    "body": [
+      "output ${1:screen}: display<${2:8}, ${3:8}>,",
+      "$0",
+      "${1:screen} = display_write(${4:x}, ${5:y}, ${6:pixel_value}, ${7:plot}, ${8:plot_all})"
+    ]
+  },
   "Enabled register": {
     "prefix": "enabled_register",
     "description": "Capture a bus when enable is high",
