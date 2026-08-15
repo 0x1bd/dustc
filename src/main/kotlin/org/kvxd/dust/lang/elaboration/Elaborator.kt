@@ -6,6 +6,7 @@ import org.kvxd.dust.CircuitPortDirection
 import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.cell.definition.PortDirection as CellPortDirection
 import org.kvxd.dust.cell.library.CellLibrary
+import org.kvxd.dust.cell.library.DisplayCell
 import org.kvxd.dust.lang.MAX_BUS_WIDTH
 import org.kvxd.dust.lang.diagnostic.DiagnosticReporter
 import org.kvxd.dust.lang.lexing.Token
@@ -93,7 +94,12 @@ internal class Elaborator(
         ports.filter { it.direction == CircuitPortDirection.OUTPUT }.forEach { port ->
             val value = outputs.getValue(port.name)
             if (port.display != null) {
-                attachDisplayOutput(builder, port.name, port.display, displayWrite(value, module.location))
+                cellLibrary.instantiateDisplay(
+                    builder,
+                    port.name,
+                    port.display,
+                    displayWrite(value, module.location).cellInputs(),
+                )
             } else {
                 val signals = signals(value, module.location)
                 if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(
@@ -205,7 +211,7 @@ internal class Elaborator(
                 fail(output.port.syntax.location, "unassigned output $names")
             }
             val signals = output.signals.map(::checkNotNull)
-            output.displayWrite?.copy(signals = signals) ?: Value.Signals(signals)
+            output.displayWrite ?: Value.Signals(signals)
         }
         if (applyTerminalPlacement) applyPortPlacement(module.syntax, builder, inputs + result)
         return result
@@ -392,12 +398,11 @@ internal class Elaborator(
                 val display = output.port.display
                     ?: fail(location, "display_write(...) can only be assigned to a display output")
                 if (index != null) fail(location, "a display output cannot be assigned by bit")
-                val expectedX = clog2(display.width)
-                val expectedY = clog2(display.height)
-                if (value.xWidth != expectedX || value.yWidth != expectedY) {
+                if (value.x.size != display.xWidth || value.y.size != display.yWidth) {
                     fail(
                         location,
-                        "display<${display.width}, ${display.height}> needs ${expectedX}-bit x and ${expectedY}-bit y coordinates",
+                        "display<${display.width}, ${display.height}> needs ${display.xWidth}-bit x and " +
+                            "${display.yWidth}-bit y coordinates",
                     )
                 }
                 output.displayWrite = value
@@ -565,9 +570,11 @@ internal class Elaborator(
                     fail(call.location, "display_write value, plot, and plot_all inputs must be bits")
                 }
                 return Value.DisplayWrite(
-                    arguments.flatten(),
-                    xWidth = arguments[0].size,
-                    yWidth = arguments[1].size,
+                    x = arguments[0],
+                    y = arguments[1],
+                    pixelValue = arguments[2].single(),
+                    plot = arguments[3].single(),
+                    plotAll = arguments[4].single(),
                 )
             }
 
@@ -683,53 +690,8 @@ internal class Elaborator(
         )
     }
 
-    private fun attachDisplayOutput(
-        builder: BooleanNetlistBuilder,
-        name: String,
-        dimensions: DisplayDimensions,
-        write: Value.DisplayWrite,
-    ) {
-        val xEnd = write.xWidth
-        val yEnd = xEnd + write.yWidth
-        val x = write.signals.subList(0, xEnd)
-        val y = write.signals.subList(xEnd, yEnd)
-        val value = write.signals[yEnd]
-        val plot = write.signals[yEnd + 1]
-        val plotAll = write.signals[yEnd + 2]
-        val selectedColumns = decode(builder, dimensions.width, x)
-        val selectedRows = decode(builder, dimensions.height, y)
-        val writableRows = selectedRows.map { selectedRow -> builder.and(plot, selectedRow) }
-        val pixels = writableRows.flatMap { writableRow ->
-            selectedColumns.map { selectedColumn ->
-                val writePixel = builder.or(plotAll, builder.and(selectedColumn, writableRow))
-                builder.latch(value, builder.not(writePixel))
-            }
-        }
-        val cell = try {
-            cellLibrary.specialize("display_matrix", listOf(dimensions.width, dimensions.height))
-        } catch (exception: IllegalArgumentException) {
-            error(exception.message ?: "invalid display specialization")
-        }
-        builder.instance(
-            cell.logicalType,
-            mapOf("pixels" to pixels),
-            name = "output-$name",
-        )
-    }
-
-    private fun decode(builder: BooleanNetlistBuilder, width: Int, address: List<Signal>): List<Signal> {
-        val inverted = address.map(builder::not)
-        return List(width) { decoded ->
-            address.indices.map { bit ->
-                if (decoded and (1 shl bit) == 0) inverted[bit] else address[bit]
-            }.reduce(builder::and)
-        }
-    }
-
     private fun displayWrite(value: Value, location: Token): Value.DisplayWrite =
         value as? Value.DisplayWrite ?: fail(location, "a display output needs display_write(...)")
-
-    private fun clog2(value: Int): Int = Int.SIZE_BITS - Integer.numberOfLeadingZeros(value - 1)
 
     private fun unary(
         expression: UnarySyntax,
@@ -837,7 +799,7 @@ internal class Elaborator(
                             fail(port.location, "a display must be an output")
                         }
                         val display = try {
-                            DisplayDimensions(
+                            cellLibrary.displayDimensions(
                                 constantInteger(type.width, arguments),
                                 constantInteger(type.height, arguments),
                             )
@@ -846,7 +808,7 @@ internal class Elaborator(
                         }
                         ResolvedPort(
                             port,
-                            clog2(display.width) + clog2(display.height) + DISPLAY_CONTROL_BITS,
+                            display.inputWidth,
                             display,
                         )
                     }
@@ -1035,7 +997,17 @@ internal class Elaborator(
 
     private sealed interface Value {
         data class Signals(val signals: List<Signal>) : Value
-        data class DisplayWrite(val signals: List<Signal>, val xWidth: Int, val yWidth: Int) : Value
+        data class DisplayWrite(
+            val x: List<Signal>,
+            val y: List<Signal>,
+            val pixelValue: Signal,
+            val plot: Signal,
+            val plotAll: Signal,
+        ) : Value {
+            val signals: List<Signal> = x + y + pixelValue + plot + plotAll
+
+            fun cellInputs(): DisplayCell.Inputs = DisplayCell.Inputs(x, y, pixelValue, plot, plotAll)
+        }
         data class Bundle(val outputs: Map<String, Value>) : Value
         data class Integer(val value: Int) : Value
     }
@@ -1082,7 +1054,6 @@ internal class Elaborator(
     private class ElaborationError : RuntimeException()
 
     private companion object {
-        const val DISPLAY_CONTROL_BITS: Int = 3
         val STORAGE_INTRINSICS = setOf("register", "enabled_register", "resettable_register")
         val INTEGER_OPERATORS = setOf(
             TokenType.PLUS,

@@ -81,6 +81,7 @@ object MinecraftRedstone {
             CellProvider.fixed(logical, physicalView = { cells.load(logical.id.value) })
         } + cells.provider(ClockCell.NAME, ClockCell::logicalType) +
             cells.provider(DisplayMatrixCell.NAME, DisplayMatrixCell::logicalType),
+        displayCell = RedstoneDisplayCell,
     )
 
     val technology: RedstoneTechnology = technology()

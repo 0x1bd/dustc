@@ -1,10 +1,15 @@
 package org.kvxd.dust.cell.library
 
+import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.cell.definition.CellType
 import org.kvxd.dust.cell.definition.CellTypeId
+import org.kvxd.dust.netlist.BooleanNetlistBuilder
 import org.kvxd.dust.technology.StandardCell
 
-class CellLibrary(providers: List<CellProvider>) {
+class CellLibrary(
+    providers: List<CellProvider>,
+    private val displayCell: DisplayCell? = null,
+) {
     private val providers: Map<String, CellProvider> = providers.associateBy { it.name }.also { indexed ->
         require(indexed.size == providers.size) { "cell library repeats a provider name" }
     }
@@ -46,6 +51,22 @@ class CellLibrary(providers: List<CellProvider>) {
     fun providerNames(): Set<String> = providers.keys
 
     fun provider(name: String): CellProvider? = providers[name]
+
+    internal fun displayDimensions(width: Int, height: Int): DisplayDimensions {
+        val dimensions = DisplayDimensions(width, height)
+        requireNotNull(displayCell) { "this cell library does not provide displays" }.validate(dimensions)
+        return dimensions
+    }
+
+    internal fun instantiateDisplay(
+        builder: BooleanNetlistBuilder,
+        name: String,
+        dimensions: DisplayDimensions,
+        inputs: DisplayCell.Inputs,
+    ) {
+        requireNotNull(displayCell) { "this cell library does not provide displays" }
+            .instantiate(this, builder, name, dimensions, inputs)
+    }
 
     private data class CellSpecialization(
         val provider: String,
