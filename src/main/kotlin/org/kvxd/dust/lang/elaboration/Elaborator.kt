@@ -6,7 +6,6 @@ import org.kvxd.dust.CircuitPortDirection
 import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.cell.definition.PortDirection as CellPortDirection
 import org.kvxd.dust.cell.library.CellLibrary
-import org.kvxd.dust.cell.library.DisplayCell
 import org.kvxd.dust.lang.MAX_BUS_WIDTH
 import org.kvxd.dust.lang.diagnostic.DiagnosticReporter
 import org.kvxd.dust.lang.lexing.Token
@@ -44,6 +43,7 @@ internal class Elaborator(
 ) {
     private val modules = modules.associateBy { it.name }
     private val specializations = linkedMapOf<SpecializationKey, SpecializedModule>()
+    private val displays = DisplayElaboration(cellLibrary)
 
     init {
         modules.forEach { module ->
@@ -94,12 +94,7 @@ internal class Elaborator(
         ports.filter { it.direction == CircuitPortDirection.OUTPUT }.forEach { port ->
             val value = outputs.getValue(port.name)
             if (port.display != null) {
-                cellLibrary.instantiateDisplay(
-                    builder,
-                    port.name,
-                    port.display,
-                    displayWrite(value, module.location).cellInputs(),
-                )
+                displays.instantiate(builder, port.name, port.display, displayWrite(value, module.location).write)
             } else {
                 val signals = signals(value, module.location)
                 if (signals.size == 1) builder.output(port.name, signals.single()) else builder.outputBus(
@@ -136,13 +131,8 @@ internal class Elaborator(
                         "#[panel] currently supports north/south edges; omit #[edge] for automatic panel placement"
                     )
                 }
-                if (resolved.display != null) {
-                    if (placement.edge != null && placement.edge != InterfaceEdge.NORTH) {
-                        fail(port.location, "a display output faces the north edge")
-                    }
-                    if (placement.panel || placement.tier != null || placement.near.isNotEmpty()) {
-                        fail(port.location, "display output placement is automatic")
-                    }
+                if (resolved.display != null) tryDisplay(port.location) {
+                    displays.validatePlacement(placement.edge, placement.panel, placement.tier, placement.near)
                 }
                 CircuitPort(
                     port.name,
@@ -154,7 +144,7 @@ internal class Elaborator(
                     },
                     port.group,
                     if (resolved.display != null) {
-                        PhysicalIoEdge.NORTH
+                        displays.outputEdge
                     } else {
                         placement.edge?.let { PhysicalIoEdge.valueOf(it.name) }
                     },
@@ -397,14 +387,7 @@ internal class Elaborator(
             is Value.DisplayWrite -> {
                 val display = output.port.display
                     ?: fail(location, "display_write(...) can only be assigned to a display output")
-                if (index != null) fail(location, "a display output cannot be assigned by bit")
-                if (value.x.size != display.xWidth || value.y.size != display.yWidth) {
-                    fail(
-                        location,
-                        "display<${display.width}, ${display.height}> needs ${display.xWidth}-bit x and " +
-                            "${display.yWidth}-bit y coordinates",
-                    )
-                }
+                tryDisplay(location) { displays.validateAssignment(display, value.write, index) }
                 output.displayWrite = value
                 value.signals
             }
@@ -566,16 +549,7 @@ internal class Elaborator(
                 val arguments = call.arguments.map { argument ->
                     signals(evaluate(argument, environment, outputs, builder, callStack), argument.location)
                 }
-                if (arguments.drop(2).any { it.size != 1 }) {
-                    fail(call.location, "display_write value, plot, and plot_all inputs must be bits")
-                }
-                return Value.DisplayWrite(
-                    x = arguments[0],
-                    y = arguments[1],
-                    pixelValue = arguments[2].single(),
-                    plot = arguments[3].single(),
-                    plotAll = arguments[4].single(),
-                )
+                return Value.DisplayWrite(tryDisplay(call.location) { displays.write(arguments) })
             }
 
             "latch" -> {
@@ -795,16 +769,12 @@ internal class Elaborator(
                     }
 
                     is DisplayPortTypeSyntax -> {
-                        if (port.direction != PortDirection.OUTPUT) {
-                            fail(port.location, "a display must be an output")
-                        }
-                        val display = try {
-                            cellLibrary.displayDimensions(
+                        val display = tryDisplay(type.location) {
+                            displays.resolvePort(
+                                port.direction,
                                 constantInteger(type.width, arguments),
                                 constantInteger(type.height, arguments),
                             )
-                        } catch (exception: IllegalArgumentException) {
-                            fail(type.location, exception.message ?: "invalid display dimensions")
                         }
                         ResolvedPort(
                             port,
@@ -990,6 +960,12 @@ internal class Elaborator(
         fail(location, exception.message ?: "invalid $description")
     }
 
+    private fun <T> tryDisplay(location: Token, operation: () -> T): T = try {
+        operation()
+    } catch (exception: IllegalArgumentException) {
+        fail(location, exception.message ?: "invalid display")
+    }
+
     private fun fail(location: Token, message: String): Nothing {
         reporter.error(message, location)
         throw ElaborationError()
@@ -997,16 +973,8 @@ internal class Elaborator(
 
     private sealed interface Value {
         data class Signals(val signals: List<Signal>) : Value
-        data class DisplayWrite(
-            val x: List<Signal>,
-            val y: List<Signal>,
-            val pixelValue: Signal,
-            val plot: Signal,
-            val plotAll: Signal,
-        ) : Value {
-            val signals: List<Signal> = x + y + pixelValue + plot + plotAll
-
-            fun cellInputs(): DisplayCell.Inputs = DisplayCell.Inputs(x, y, pixelValue, plot, plotAll)
+        data class DisplayWrite(val write: DisplayElaboration.Write) : Value {
+            val signals: List<Signal> = write.signals
         }
         data class Bundle(val outputs: Map<String, Value>) : Value
         data class Integer(val value: Int) : Value

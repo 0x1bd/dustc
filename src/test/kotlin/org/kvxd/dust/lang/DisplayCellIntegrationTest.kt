@@ -15,6 +15,7 @@ import org.kvxd.dust.cell.library.CellLibrary
 import org.kvxd.dust.cell.library.DisplayCell
 import org.kvxd.dust.cell.timing.CellTiming
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
+import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 class DisplayCellIntegrationTest {
     @Test
@@ -40,6 +41,7 @@ class DisplayCellIntegrationTest {
 
         assertEquals(DisplayDimensions(3, 5), display.validated)
         assertEquals(DisplayDimensions(3, 5), display.instantiated)
+        assertEquals(PhysicalIoEdge.SOUTH, circuit.displayOutputs.single().edge)
         assertSame(display.sink, circuit.lowerToBooleanNetlist().instances.single().type)
     }
 
@@ -58,6 +60,8 @@ class DisplayCellIntegrationTest {
     }
 
     private class RecordingDisplayCell : DisplayCell {
+        override val outputEdge: PhysicalIoEdge = PhysicalIoEdge.SOUTH
+
         val sink = CellType(
             CellTypeId("recording-display"),
             listOf(CellPort("pixel", 1, PortDirection.INPUT)),

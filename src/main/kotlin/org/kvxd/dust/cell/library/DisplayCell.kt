@@ -3,8 +3,11 @@ package org.kvxd.dust.cell.library
 import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
 import org.kvxd.dust.netlist.Signal
+import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 interface DisplayCell {
+    val outputEdge: PhysicalIoEdge
+
     fun validate(dimensions: DisplayDimensions)
 
     fun instantiate(

@@ -6,8 +6,11 @@ import org.kvxd.dust.cell.library.DisplayCell
 import org.kvxd.dust.cell.library.DisplayMatrixCell
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
 import org.kvxd.dust.netlist.Signal
+import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 internal object RedstoneDisplayCell : DisplayCell {
+    override val outputEdge: PhysicalIoEdge = PhysicalIoEdge.NORTH
+
     override fun validate(dimensions: DisplayDimensions) {
         require(dimensions.width in MINIMUM_DIMENSION..MAXIMUM_DIMENSION && dimensions.width % 2 == 0) {
             "display width must be even and between $MINIMUM_DIMENSION and $MAXIMUM_DIMENSION"

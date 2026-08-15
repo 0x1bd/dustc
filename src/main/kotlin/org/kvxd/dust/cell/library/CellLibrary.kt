@@ -4,6 +4,7 @@ import org.kvxd.dust.DisplayDimensions
 import org.kvxd.dust.cell.definition.CellType
 import org.kvxd.dust.cell.definition.CellTypeId
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
+import org.kvxd.dust.physical.io.PhysicalIoEdge
 import org.kvxd.dust.technology.StandardCell
 
 class CellLibrary(
@@ -57,6 +58,9 @@ class CellLibrary(
         requireNotNull(displayCell) { "this cell library does not provide displays" }.validate(dimensions)
         return dimensions
     }
+
+    internal fun displayOutputEdge(): PhysicalIoEdge =
+        requireNotNull(displayCell) { "this cell library does not provide displays" }.outputEdge
 
     internal fun instantiateDisplay(
         builder: BooleanNetlistBuilder,
