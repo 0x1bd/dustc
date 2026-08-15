@@ -24,6 +24,7 @@ import org.kvxd.dust.lang.syntax.NameSyntax
 import org.kvxd.dust.lang.syntax.PortDirection
 import org.kvxd.dust.lang.syntax.PortSyntax
 import org.kvxd.dust.lang.syntax.SignalPortTypeSyntax
+import org.kvxd.dust.lang.syntax.SliceSyntax
 import org.kvxd.dust.lang.syntax.StatementSyntax
 import org.kvxd.dust.lang.syntax.UnarySyntax
 import org.kvxd.dust.lang.syntax.VariableSyntax
@@ -234,9 +235,12 @@ internal class Parser(
 
                 match(TokenType.LBRACKET) -> {
                     val location = previous()
-                    val index = parseExpression()
+                    val first = parseExpression()
+                    val sliced = match(TokenType.DOTDOT)
+                    val end = if (sliced) parseExpression() else null
                     consume(TokenType.RBRACKET, "expected ']'")
-                    IndexSyntax(expression, index, location)
+                    if (end == null) IndexSyntax(expression, first, location)
+                    else SliceSyntax(expression, first, end, location)
                 }
 
                 else -> return expression

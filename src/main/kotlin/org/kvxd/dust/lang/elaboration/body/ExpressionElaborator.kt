@@ -21,6 +21,7 @@ import org.kvxd.dust.lang.syntax.IndexSyntax
 import org.kvxd.dust.lang.syntax.IntegerSyntax
 import org.kvxd.dust.lang.syntax.NameSyntax
 import org.kvxd.dust.lang.syntax.PortDirection
+import org.kvxd.dust.lang.syntax.SliceSyntax
 import org.kvxd.dust.lang.syntax.UnarySyntax
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
 import org.kvxd.dust.netlist.Signal
@@ -58,6 +59,14 @@ internal class ExpressionElaborator(
             ElaboratedValue.Signals(listOf(signals.signals[index]))
         }
 
+        is SliceSyntax -> {
+            val target = evaluate(expression.target, environment, outputs, builder, callStack)
+            val signals = target as? ElaboratedValue.Signals
+                ?: fail(expression.target.location, "only a bus can be sliced")
+            val range = sliceRange(expression, signals.signals.size, environment, outputs, builder, callStack)
+            ElaboratedValue.Signals(signals.signals.slice(range))
+        }
+
         is AccessSyntax -> {
             val target = evaluate(expression.target, environment, outputs, builder, callStack)
             val bundle = target as? ElaboratedValue.Bundle
@@ -83,6 +92,23 @@ internal class ExpressionElaborator(
         callStack: List<SpecializationKey>,
     ): Int = (evaluate(expression, environment, outputs, builder, callStack) as? ElaboratedValue.Integer)?.value
         ?: fail(expression.location, "expected a compile-time integer")
+
+    fun sliceRange(
+        expression: SliceSyntax,
+        width: Int,
+        environment: ElaborationEnvironment,
+        outputs: Map<String, OutputBinding>,
+        builder: BooleanNetlistBuilder,
+        callStack: List<SpecializationKey>,
+    ): IntRange {
+        val first = integer(expression.first, environment, outputs, builder, callStack)
+        val end = integer(expression.end, environment, outputs, builder, callStack)
+        if (first !in 0..width || end !in 0..width) {
+            fail(expression.location, "slice $first..$end is out of bounds for a $width-bit bus")
+        }
+        if (first >= end) fail(expression.location, "slice range must select at least one bit")
+        return first until end
+    }
 
     private fun conditional(
         expression: IfSyntax,

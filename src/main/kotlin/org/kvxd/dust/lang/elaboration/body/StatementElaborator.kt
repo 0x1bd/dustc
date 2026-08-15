@@ -15,6 +15,7 @@ import org.kvxd.dust.lang.syntax.ExpressionSyntax
 import org.kvxd.dust.lang.syntax.ForSyntax
 import org.kvxd.dust.lang.syntax.IndexSyntax
 import org.kvxd.dust.lang.syntax.NameSyntax
+import org.kvxd.dust.lang.syntax.SliceSyntax
 import org.kvxd.dust.lang.syntax.VariableSyntax
 import org.kvxd.dust.netlist.BooleanNetlistBuilder
 
@@ -211,7 +212,70 @@ internal class StatementElaborator(
                 )
             }
 
-            else -> fail(target.location, "assignment target must be a signal or bus bit")
+            is SliceSyntax -> assignSlice(target, value, assignment, environment, outputs, builder, callStack)
+
+            else -> fail(target.location, "assignment target must be a signal, bus bit, or bus slice")
+        }
+    }
+
+    private fun assignSlice(
+        target: SliceSyntax,
+        value: ElaboratedValue,
+        assignment: AssignmentSyntax,
+        environment: ElaborationEnvironment,
+        outputs: Map<String, OutputBinding>,
+        builder: BooleanNetlistBuilder,
+        callStack: List<SpecializationKey>,
+    ) {
+        val name = target.target as? NameSyntax
+            ?: fail(target.location, "only a named bus can be assigned by slice")
+        val assigned = value as? ElaboratedValue.Signals
+            ?: fail(assignment.value.location, "expected a bit or bus")
+        outputs[name.name]?.let { output ->
+            val range = expressions.sliceRange(
+                target,
+                output.signals.size,
+                environment,
+                outputs,
+                builder,
+                callStack,
+            )
+            validateSliceWidth(name.name, range, assigned, assignment.value.location)
+            range.zip(assigned.signals).forEach { (bit, signal) ->
+                ports.connect(output, bit, ElaboratedValue.Signals(listOf(signal)), target.location)
+            }
+            return
+        }
+
+        val binding = environment.find(name.name)
+            ?: fail(name.location, "unknown signal '${name.name}'")
+        if (!binding.mutable) fail(name.location, "'${name.name}' is immutable")
+        val signals = binding.value as? ElaboratedValue.Signals
+            ?: fail(name.location, "'${name.name}' is not a bus")
+        val range = expressions.sliceRange(
+            target,
+            signals.signals.size,
+            environment,
+            outputs,
+            builder,
+            callStack,
+        )
+        validateSliceWidth(name.name, range, assigned, assignment.value.location)
+        binding.value = ElaboratedValue.Signals(
+            signals.signals.toMutableList().also { updated ->
+                range.zip(assigned.signals).forEach { (bit, signal) -> updated[bit] = signal }
+            },
+        )
+    }
+
+    private fun validateSliceWidth(
+        name: String,
+        range: IntRange,
+        assigned: ElaboratedValue.Signals,
+        location: Token,
+    ) {
+        if (assigned.signals.size != range.count()) {
+            fail(location, "$name slice needs ${range.count()} bits, got ${assigned.signals.size}")
         }
     }
 

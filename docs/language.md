@@ -61,14 +61,17 @@ Bus widths are between 1 and 4096 bits. Bit 0 is the least-significant bit when 
 Integer-valued helpers such as `const_bits` and the word-evaluation API remain limited to 64-bit values. Wider buses
 are intended for structural state such as display framebuffers.
 
-Index a bus with `[]`:
+Index a bus with `[]`, or select a half-open range with `[..]`:
 
 ```dust
 let low_bit = value[0]
 result[3] = value[5]
+let low_nibble = value[0..4]
+result[4..8] = value[0..4]
 ```
 
-Indices must be compile-time integers. Dust does not currently have slices such as `value[0..4]`.
+Indices and slice bounds must be compile-time integers. A slice `value[first..end]` contains bits `first` through
+`end - 1`, preserving least-significant-bit-first order. Bounds must select at least one bit and remain within the bus.
 
 A persistent physical display is declared as a top-level output type:
 
@@ -174,11 +177,12 @@ carry = next_carry
 This is useful for constructing chains in loops, but it is important that `let mut` **does not create storage hardware
 **. It only changes which compile-time value the name refers to. Use `latch()` when the circuit actually needs state.
 
-Mutable buses can also be changed one bit at a time:
+Mutable buses can also be changed one bit or slice at a time:
 
 ```dust
 let mut value = a
 value[2] = b
+value[4..8] = replacement
 ```
 
 `let rec` predeclares a register result so its next-state expression can read the current state:
@@ -762,7 +766,7 @@ More examples are available in the [examples](../examples) directory.
 
 ## Current language boundaries
 
-Dust is intentionally small. In particular, it currently has no bus slices, runtime loops, recursive modules, or
-user-defined types.
+Dust is intentionally small. In particular, it currently has no runtime loops, recursive modules, or user-defined
+types.
 
 Certain features will likely be added in the future.
