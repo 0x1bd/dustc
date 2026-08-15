@@ -70,6 +70,16 @@ result[3] = value[5]
 
 Indices must be compile-time integers. Dust does not currently have slices such as `value[0..4]`.
 
+A persistent physical display is declared as a top-level output type:
+
+```dust
+output screen: display<8, 8>
+```
+
+Unlike `bit` and `bits<N>`, a display output is a physical sink. Assign it a pixel
+write command with `display_write(x, y, pixel_value, plot, plot_all)`. Display outputs are automatically placed with
+their lamp face on the north exterior edge of the schematic.
+
 ## I/O groups
 
 Related ports can be collected into named groups:
@@ -319,6 +329,18 @@ module mux8(
 }
 ```
 
+### One-hot decoder
+
+`decode<N>(address)` produces an `N`-bit bus with exactly one selected bit. The selected bit is the unsigned value of
+`address`. All other bits are 0. `address` must be `bits<clog2(N)>`, and `N` may range from 2 through 64.
+
+```dust
+let selected = decode<8>(address)
+```
+
+The decoder shares the inverted address bits between its outputs. Use it instead of comparing the same address against
+every possible constant when building row selectors, register files, or displays.
+
 ### Latch
 
 `latch(data, hold)` creates one bit of state:
@@ -384,6 +406,39 @@ Externally stepped builds always reject hold violations and report their minimum
 
 ### Persistent lamp display
 
+`display<WIDTH, HEIGHT>` is a flush, persistent redstone output. Width and height may independently be any even value
+from 8 through 64. Each pixel is a 2x2 lamp square.
+
+Each pixel is stored by an ordinary transparent latch, and the latch outputs feed one contiguous flush lamp-matrix
+hard macro.
+
+Set the `clog2(WIDTH)`-bit `x` coordinate, the `clog2(HEIGHT)`-bit `y` coordinate, and `pixel_value`, then briefly
+change `plot` from 0 to 1 and back to 0 to write that pixel. The value remains visible after the address and data inputs
+change. Briefly pulse `plot_all` instead to write `pixel_value` to every pixel. This clears the display when the value
+is 0 and fills it when the value is 1.
+`plot` and `plot_all` are direct redstone controls and do not need a separate clock input.
+
+```dust
+module main(
+    input x: bits<3>,
+    input y: bits<3>,
+    input pixel_value: bit,
+    input plot: bit,
+    input plot_all: bit,
+    output screen: display<8, 8>,
+) {
+    screen = display_write(x, y, pixel_value, plot, plot_all)
+}
+```
+
+The complete
+[`display-demo.dust`](../examples/display-demo.dust) example exposes the five controls on a separate panel.
+
+[`bresenham-display.dust`](../examples/bresenham-display.dust) is a complete clocked Bresenham line drawer.
+
+The register-backed display remains available when independent pixel inputs or synchronous register semantics are more
+useful:
+
 `display<WIDTH, HEIGHT>(x, y, pixel_value, write, clear, clock)` creates a persistent framebuffer backed by ordinary
 registers and presents it through a hard-macro lamp wall. Width and height may independently range from 8 through 64.
 Each logical pixel is rendered as an adjacent 2x2 cluster of redstone lamps. Coordinates outside a non-power-of-two
@@ -396,7 +451,6 @@ pixel. Both controls therefore need a clock change before they take effect.
 display<8, 8>(x, y, true, plot, clear, clock)
 ```
 
-The complete [`display-demo.dust`](../examples/display-demo.dust) example writes a diagonal line one point at a time.
 Larger displays are supported but contain proportionally more registers and routing.
 
 ## Calling modules

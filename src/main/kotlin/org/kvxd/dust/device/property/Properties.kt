@@ -7,6 +7,7 @@ import org.kvxd.dust.device.redstone.WireConnection
 
 object Properties {
     val FACING = EnumProperty("facing", Direction.HORIZONTALS)
+    val BLOCK_FACING = EnumProperty("facing", Direction.ALL)
     val POWERED = BooleanProperty("powered")
     val LIT = BooleanProperty("lit")
     val LOCKED = BooleanProperty("locked")

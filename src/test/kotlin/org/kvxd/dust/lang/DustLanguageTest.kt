@@ -9,6 +9,25 @@ import org.kvxd.dust.physical.io.PhysicalIoEdge
 
 class DustLanguageTest {
     @Test
+    fun `one hot decoder selects the addressed bit`() {
+        val decoder = DustLanguage.compile(
+            "module main(input address: bits<3>, output selected: bits<8>) { selected = decode<8>(address) }",
+            "decoder.dust",
+        ).single()
+
+        repeat(8) { address ->
+            assertEquals(1uL shl address, decoder.evaluate("address" to address.toULong())["selected"])
+        }
+        val mismatch = assertFailsWith<DustCompileException> {
+            DustLanguage.compile(
+                "module main(input address: bits<2>, output selected: bits<8>) { selected = decode<8>(address) }",
+                "bad-decoder.dust",
+            )
+        }
+        assertTrue("decode<8> needs a 3-bit address" in mismatch.message.orEmpty())
+    }
+
+    @Test
     fun `hardware if expressions lower bits and buses to mux cells`() {
         val conditional = DustLanguage.compile(
             """
@@ -52,13 +71,19 @@ class DustLanguageTest {
             """.trimIndent(),
             "nested-if.dust",
         ).single()
-        assertEquals(true, nested.evaluate("first" to 1uL, "second" to 0uL, "a" to 1uL, "b" to 0uL, "c" to 0uL).bit("y"))
-        assertEquals(true, nested.evaluate("first" to 0uL, "second" to 1uL, "a" to 0uL, "b" to 1uL, "c" to 0uL).bit("y"))
+        assertEquals(
+            true,
+            nested.evaluate("first" to 1uL, "second" to 0uL, "a" to 1uL, "b" to 0uL, "c" to 0uL).bit("y")
+        )
+        assertEquals(
+            true,
+            nested.evaluate("first" to 0uL, "second" to 1uL, "a" to 0uL, "b" to 1uL, "c" to 0uL).bit("y")
+        )
 
         val invalid = assertFailsWith<DustCompileException> {
             DustLanguage.compile(
                 "module invalid(input select: bits<2>, input a: bit, input b: bit, output y: bit) " +
-                    "{ y = if select { a } else { b } }",
+                        "{ y = if select { a } else { b } }",
                 "invalid-if.dust",
             )
         }
@@ -67,7 +92,7 @@ class DustLanguageTest {
         val mismatched = assertFailsWith<DustCompileException> {
             DustLanguage.compile(
                 "module invalid(input select: bit, input a: bit, input b: bits<2>, output y: bit) " +
-                    "{ y = if select { a } else { b } }",
+                        "{ y = if select { a } else { b } }",
                 "mismatched-if.dust",
             )
         }

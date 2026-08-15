@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.kvxd.dust.device.block.BlockMatrix
 import org.kvxd.dust.device.block.BlockType
+import org.kvxd.dust.device.block.ContainerBlockEntity
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.geometry.Direction
 import org.kvxd.dust.device.property.Properties
@@ -77,5 +78,49 @@ class RedstoneTowerTest {
             WireSides.CROSS.applyTo(BlockType.REDSTONE_WIRE.defaultState.with(Properties.POWER, 15)),
         )
         assertEquals(false, Redstone.anyTorchShouldBeOff(matrix, torchPos))
+    }
+
+    @Test
+    fun `standing torch reads its block below and does not power it`() {
+        val matrix = BlockMatrix(5, 5, 5)
+        val support = BlockPos(2, 1, 2)
+        val torch = support.offset(Direction.UP)
+        val lever = support.offset(Direction.EAST)
+        matrix.setBlockAt(support, BlockType.WHITE_WOOL.defaultState)
+        matrix.setBlockAt(torch, BlockType.REDSTONE_TORCH.defaultState)
+        matrix.setBlockAt(
+            lever,
+            BlockType.LEVER.defaultState
+                .with(Properties.FACING, Direction.EAST)
+                .with(Properties.POWERED, true),
+        )
+
+        assertTrue(Redstone.anyTorchShouldBeOff(matrix, torch))
+        assertEquals(0, Redstone.weakPower(matrix, torch, Direction.UP))
+        assertEquals(Redstone.maximumSignalStrength, Redstone.weakPower(matrix, torch, Direction.NORTH))
+        assertEquals(Redstone.maximumSignalStrength, Redstone.strongPower(matrix, torch, Direction.DOWN))
+    }
+
+    @Test
+    fun `powered side comparator locks a repeater`() {
+        val matrix = BlockMatrix(6, 3, 6)
+        val repeater = BlockPos(2, 1, 2)
+        val comparator = repeater.offset(Direction.EAST)
+        val barrel = comparator.offset(Direction.EAST)
+        matrix.setBlockAt(
+            repeater,
+            BlockType.REPEATER.defaultState.with(Properties.FACING, Direction.NORTH),
+        )
+        matrix.setBlockAt(
+            comparator,
+            BlockType.COMPARATOR.defaultState.with(Properties.FACING, Direction.EAST),
+        )
+        matrix.setBlockAt(
+            barrel,
+            BlockType.BARREL.defaultState.with(Properties.BLOCK_FACING, Direction.UP),
+        )
+        matrix.setBlockEntityAt(barrel, ContainerBlockEntity.barrelSignal(1))
+
+        assertTrue(Redstone.repeaterShouldBeLocked(matrix, repeater, Direction.NORTH))
     }
 }

@@ -1,0 +1,195 @@
+module bresenham_next<const COORD_BITS: int>(
+    input state: bits<7 * COORD_BITS + 4>,
+    input start: bit,
+    input x0: bits<COORD_BITS>,
+    input y0: bits<COORD_BITS>,
+    input x1: bits<COORD_BITS>,
+    input y1: bits<COORD_BITS>,
+    output next_state: bits<7 * COORD_BITS + 4>,
+) {
+    let mut current_x = const_bits<COORD_BITS>(0)
+    let mut current_y = const_bits<COORD_BITS>(0)
+    let mut target_x = const_bits<COORD_BITS>(0)
+    let mut target_y = const_bits<COORD_BITS>(0)
+    let mut dx = const_bits<COORD_BITS>(0)
+    let mut dy = const_bits<COORD_BITS>(0)
+    let mut error = const_bits<COORD_BITS + 1>(0)
+    for bit in 0..COORD_BITS {
+        current_x[bit] = state[bit]
+        current_y[bit] = state[COORD_BITS + bit]
+        target_x[bit] = state[2 * COORD_BITS + bit]
+        target_y[bit] = state[3 * COORD_BITS + bit]
+        dx[bit] = state[4 * COORD_BITS + bit]
+        dy[bit] = state[5 * COORD_BITS + bit]
+    }
+    for bit in 0..(COORD_BITS + 1) {
+        error[bit] = state[6 * COORD_BITS + bit]
+    }
+    let positive_x = state[7 * COORD_BITS + 1]
+    let positive_y = state[7 * COORD_BITS + 2]
+    let active = state[7 * COORD_BITS + 3]
+
+    let same_x = equal<COORD_BITS>(current_x, target_x).y
+    let same_y = equal<COORD_BITS>(current_y, target_y).y
+    let at_end = same_x & same_y
+    let advance = active & (~at_end)
+
+    let mut error_wide = const_bits<COORD_BITS + 2>(0)
+    let mut dx_wide = const_bits<COORD_BITS + 2>(0)
+    let mut dy_wide = const_bits<COORD_BITS + 2>(0)
+    for bit in 0..COORD_BITS {
+        error_wide[bit] = error[bit]
+        dx_wide[bit] = dx[bit]
+        dy_wide[bit] = dy[bit]
+    }
+    error_wide[COORD_BITS] = error[COORD_BITS]
+    error_wide[COORD_BITS + 1] = error[COORD_BITS]
+    let e2 = add<COORD_BITS + 2>(error_wide, error_wide, false).sum
+    let negative_dy = neg<COORD_BITS + 2>(dy_wide).result
+    let move_x = advance & sgt<COORD_BITS + 2>(e2, negative_dy).y
+    let move_y = advance & slt<COORD_BITS + 2>(e2, dx_wide).y
+
+    let incremented_x = inc<COORD_BITS>(current_x).result
+    let decremented_x = dec<COORD_BITS>(current_x).result
+    let incremented_y = inc<COORD_BITS>(current_y).result
+    let decremented_y = dec<COORD_BITS>(current_y).result
+    let moved_x = if positive_x { incremented_x } else { decremented_x }
+    let moved_y = if positive_y { incremented_y } else { decremented_y }
+    let advanced_x = if move_x { moved_x } else { current_x }
+    let advanced_y = if move_y { moved_y } else { current_y }
+
+    let mut dy_error_width = const_bits<COORD_BITS + 1>(0)
+    let mut dx_error_width = const_bits<COORD_BITS + 1>(0)
+    for bit in 0..COORD_BITS {
+        dy_error_width[bit] = dy[bit]
+        dx_error_width[bit] = dx[bit]
+    }
+    let error_after_x = sub<COORD_BITS + 1>(error, dy_error_width, false).difference
+    let selected_error_x = if move_x { error_after_x } else { error }
+    let error_after_y = add<COORD_BITS + 1>(selected_error_x, dx_error_width, false).sum
+    let advanced_error = if move_y { error_after_y } else { selected_error_x }
+
+    let mut advanced_state = state
+    for bit in 0..COORD_BITS {
+        advanced_state[bit] = advanced_x[bit]
+        advanced_state[COORD_BITS + bit] = advanced_y[bit]
+    }
+    for bit in 0..(COORD_BITS + 1) {
+        advanced_state[6 * COORD_BITS + bit] = advanced_error[bit]
+    }
+    advanced_state[7 * COORD_BITS + 3] = active & (~at_end)
+
+    let initial_dx = abs_diff<COORD_BITS>(x0, x1).difference
+    let initial_dy = abs_diff<COORD_BITS>(y0, y1).difference
+    let mut initial_dx_wide = const_bits<COORD_BITS + 1>(0)
+    let mut initial_dy_wide = const_bits<COORD_BITS + 1>(0)
+    for bit in 0..COORD_BITS {
+        initial_dx_wide[bit] = initial_dx[bit]
+        initial_dy_wide[bit] = initial_dy[bit]
+    }
+    let initial_error = sub<COORD_BITS + 1>(initial_dx_wide, initial_dy_wide, false).difference
+    let initial_positive_x = ult<COORD_BITS>(x0, x1).y
+    let initial_positive_y = ult<COORD_BITS>(y0, y1).y
+
+    let mut loaded_state = const_bits<7 * COORD_BITS + 4>(0)
+    for bit in 0..COORD_BITS {
+        loaded_state[bit] = x0[bit]
+        loaded_state[COORD_BITS + bit] = y0[bit]
+        loaded_state[2 * COORD_BITS + bit] = x1[bit]
+        loaded_state[3 * COORD_BITS + bit] = y1[bit]
+        loaded_state[4 * COORD_BITS + bit] = initial_dx[bit]
+        loaded_state[5 * COORD_BITS + bit] = initial_dy[bit]
+    }
+    for bit in 0..(COORD_BITS + 1) {
+        loaded_state[6 * COORD_BITS + bit] = initial_error[bit]
+    }
+    loaded_state[7 * COORD_BITS + 1] = initial_positive_x
+    loaded_state[7 * COORD_BITS + 2] = initial_positive_y
+    loaded_state[7 * COORD_BITS + 3] = true
+
+    next_state = if start { loaded_state } else { advanced_state }
+}
+
+module bresenham_line<const COORD_BITS: int>(
+    input x0: bits<COORD_BITS>,
+    input y0: bits<COORD_BITS>,
+    input x1: bits<COORD_BITS>,
+    input y1: bits<COORD_BITS>,
+    input start: bit,
+    input clock: bit,
+    output x: bits<COORD_BITS>,
+    output y: bits<COORD_BITS>,
+    output plot: bit,
+    output busy: bit,
+    output done: bit,
+) {
+    let rec state = register<7 * COORD_BITS + 4>(
+        bresenham_next<COORD_BITS>(state, start, x0, y0, x1, y1).next_state,
+        clock,
+    )
+
+    let mut current_x = const_bits<COORD_BITS>(0)
+    let mut current_y = const_bits<COORD_BITS>(0)
+    let mut target_x = const_bits<COORD_BITS>(0)
+    let mut target_y = const_bits<COORD_BITS>(0)
+    for bit in 0..COORD_BITS {
+        current_x[bit] = state[bit]
+        current_y[bit] = state[COORD_BITS + bit]
+        target_x[bit] = state[2 * COORD_BITS + bit]
+        target_y[bit] = state[3 * COORD_BITS + bit]
+    }
+    let active = state[7 * COORD_BITS + 3]
+    let at_end = equal<COORD_BITS>(current_x, target_x).y & equal<COORD_BITS>(current_y, target_y).y
+    x = current_x
+    y = current_y
+    plot = active & (~clock)
+    busy = active
+    done = active & (~clock) & at_end
+}
+
+module bresenham_display<const SIZE: int = 8>(
+    input x0: bits<clog2(SIZE)>,
+    input y0: bits<clog2(SIZE)>,
+    input x1: bits<clog2(SIZE)>,
+    input y1: bits<clog2(SIZE)>,
+    input start: bit,
+    input clear: bit,
+    input clock: bit,
+    output busy: bit,
+    output done: bit,
+    output screen: display<SIZE, SIZE>,
+) {
+    let line = bresenham_line<clog2(SIZE)>(x0, y0, x1, y1, start, clock)
+    screen = display_write(line.x, line.y, ~clear, line.plot, clear)
+    busy = line.busy
+    done = line.done
+}
+
+module main<const SIZE: int = 8, const CLOCK_TICKS: int = 1286>(
+    #[panel]
+    #[edge(north)]
+    #[near(screen)]
+    input controls {
+        enabled: bit,
+        start: bit,
+        clear: bit,
+        x0: bits<clog2(SIZE)>,
+        y0: bits<clog2(SIZE)>,
+        x1: bits<clog2(SIZE)>,
+        y1: bits<clog2(SIZE)>,
+    },
+    #[panel]
+    #[edge(north)]
+    #[near(screen)]
+    output status {
+        busy: bit,
+        done: bit,
+    },
+    output screen: display<SIZE, SIZE>,
+) {
+    let system_clock = clock<CLOCK_TICKS>(enabled)
+    let drawing = bresenham_display<SIZE>(x0, y0, x1, y1, start, clear, system_clock)
+    busy = drawing.busy
+    done = drawing.done
+    screen = drawing.screen
+}

@@ -98,7 +98,9 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
     internal fun build(): BooleanNetlist {
         require(name.isNotBlank())
         require(inputs.isNotEmpty()) { "$name has no inputs" }
-        require(outputs.isNotEmpty()) { "$name has no outputs" }
+        require(outputs.isNotEmpty() || instances.any { instance ->
+            instance.type.ports.none { it.direction == PortDirection.OUTPUT }
+        }) { "$name has no outputs or physical sinks" }
         return BooleanNetlist(
             name,
             nextSignal,

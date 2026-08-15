@@ -1,5 +1,6 @@
 package org.kvxd.dust.device.block
 
+import org.kvxd.dust.device.geometry.Direction
 import org.kvxd.dust.device.property.BooleanProperty
 import org.kvxd.dust.device.property.EnumProperty
 import org.kvxd.dust.device.property.IntProperty
@@ -17,8 +18,53 @@ enum class BlockType(
     val isTransparent: Boolean = false,
 ) {
     AIR("minecraft:air", emptyList(), ComponentKind.NONE),
+    BLACK_WOOL("minecraft:black_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
+    LIGHT_GRAY_WOOL("minecraft:light_gray_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
     LIME_WOOL("minecraft:lime_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
+    MAGENTA_WOOL("minecraft:magenta_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
+    ORANGE_WOOL("minecraft:orange_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
+    PURPLE_WOOL("minecraft:purple_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
     WHITE_WOOL("minecraft:white_wool", emptyList(), ComponentKind.SUBSTRATE, isSolid = true, isCube = true),
+    BLACK_STAINED_GLASS(
+        "minecraft:black_stained_glass",
+        emptyList(),
+        ComponentKind.SUBSTRATE,
+        isSolid = true,
+        isCube = true,
+        isTransparent = true,
+    ),
+    LIME_STAINED_GLASS(
+        "minecraft:lime_stained_glass",
+        emptyList(),
+        ComponentKind.SUBSTRATE,
+        isSolid = true,
+        isCube = true,
+        isTransparent = true,
+    ),
+    MAGENTA_STAINED_GLASS(
+        "minecraft:magenta_stained_glass",
+        emptyList(),
+        ComponentKind.SUBSTRATE,
+        isSolid = true,
+        isCube = true,
+        isTransparent = true,
+    ),
+    ORANGE_STAINED_GLASS(
+        "minecraft:orange_stained_glass",
+        emptyList(),
+        ComponentKind.SUBSTRATE,
+        isSolid = true,
+        isCube = true,
+        isTransparent = true,
+    ),
+    PURPLE_STAINED_GLASS(
+        "minecraft:purple_stained_glass",
+        emptyList(),
+        ComponentKind.SUBSTRATE,
+        isSolid = true,
+        isCube = true,
+        isTransparent = true,
+    ),
     WHITE_STAINED_GLASS(
         "minecraft:white_stained_glass",
         emptyList(),
@@ -43,6 +89,11 @@ enum class BlockType(
         listOf(Properties.FACING, Properties.LIT),
         ComponentKind.TORCH,
     ),
+    REDSTONE_TORCH(
+        "minecraft:redstone_torch",
+        listOf(Properties.LIT),
+        ComponentKind.TORCH,
+    ),
     REPEATER(
         "minecraft:repeater",
         listOf(Properties.DELAY, Properties.FACING, Properties.LOCKED, Properties.POWERED),
@@ -55,7 +106,7 @@ enum class BlockType(
     ),
     BARREL(
         "minecraft:barrel",
-        listOf(Properties.FACING, Properties.OPEN),
+        listOf(Properties.BLOCK_FACING, Properties.OPEN),
         ComponentKind.CONTAINER,
         isSolid = true,
         isCube = true,
@@ -87,8 +138,9 @@ enum class BlockType(
     fun property(name: String): Property<*>? = properties.firstOrNull { it.name == name }
 
     private fun defaultValueOf(property: Property<*>): Any = when (property) {
-        Properties.LIT -> this == REDSTONE_WALL_TORCH
+        Properties.LIT -> this == REDSTONE_WALL_TORCH || this == REDSTONE_TORCH
         Properties.DELAY -> 1
+        Properties.FACING, Properties.BLOCK_FACING -> Direction.NORTH
         Properties.FACE -> AttachFace.WALL
         Properties.MODE -> ComparatorMode.COMPARE
         else -> when (property) {

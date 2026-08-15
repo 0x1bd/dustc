@@ -48,5 +48,5 @@ object RedstoneBlocks {
     }
 
     fun barrel(facing: Direction = Direction.NORTH): BlockState =
-        BlockType.BARREL.defaultState.with(Properties.FACING, facing)
+        BlockType.BARREL.defaultState.with(Properties.BLOCK_FACING, facing)
 }

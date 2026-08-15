@@ -5,7 +5,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.kvxd.dust.device.geometry.BlockPos
 import org.kvxd.dust.device.block.BlockType
-import org.kvxd.dust.device.block.ComponentKind
 import org.kvxd.dust.device.property.Properties
 import org.kvxd.dust.netlist.Primitive
 import org.kvxd.dust.physical.PhysicalCompiler
@@ -131,23 +130,4 @@ class CellLibraryTest {
         }
     }
 
-    @Test
-    fun `report cell geometry`() {
-        println("cell           size      footprint blocks nodes latency")
-        (Primitive.entries.map { it.name.lowercase() to cell(it) } +
-            listOf("input-terminal" to technology.inputTerminal, "output-terminal" to technology.outputTerminal))
-            .forEach { (name, cell) ->
-                val nodes = cell.blocks.count { (_, state) ->
-                    state.type.component == ComponentKind.TORCH || state.type.component == ComponentKind.REPEATER
-                }
-                println(
-                    name.padEnd(15) +
-                        "${cell.size.x}x${cell.size.y}x${cell.size.z}".padEnd(10) +
-                        "${cell.size.x * cell.size.z}".padEnd(10) +
-                        "${cell.blocks.size}".padEnd(7) +
-                        "$nodes".padEnd(6) +
-                        "${cell.latencyTicks}",
-                )
-            }
-    }
 }

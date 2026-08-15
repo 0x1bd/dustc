@@ -9,8 +9,6 @@ import org.kvxd.dust.cell.timing.CellTiming
 
 object DisplayMatrixCell {
     const val NAME: String = "display_matrix"
-    const val MINIMUM_DIMENSION: Int = 8
-    const val MAXIMUM_DIMENSION: Int = 64
 
     fun logicalType(parameters: Map<String, Int>): CellType {
         val width = parameters.getValue("WIDTH")

@@ -5,7 +5,7 @@ import org.kvxd.dust.lang.lexing.Token
 internal data class PortSyntax(
     val direction: PortDirection,
     val name: String,
-    val width: ExpressionSyntax,
+    val type: PortTypeSyntax,
     val group: String?,
     val attributes: List<AttributeSyntax>,
     override val location: Token,

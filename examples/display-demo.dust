@@ -1,24 +1,20 @@
 module main(
     #[panel]
-    #[edge(north)]
+    #[edge(south)]
     input controls {
-        write: bit,
-        clear: bit,
-        clock: bit,
+        x: bits<3>,
+        y: bits<3>,
+        pixel_value: bit,
+        plot: bit,
+        plot_all: bit,
     },
     #[panel]
-    #[edge(north)]
+    #[edge(south)]
     output status {
-        position: bits<3>,
+        ready: bit,
     },
+    output screen: display<8, 8>,
 ) {
-    let rec coordinate = register<3>(
-        if clear { const_bits<3>(0) } else {
-            if write { increment<3>(coordinate).result } else { coordinate }
-        },
-        clock,
-    )
-
-    display<8, 8>(coordinate, coordinate, true, write, clear, clock)
-    position = coordinate
+    screen = display_write(x, y, pixel_value, plot, plot_all)
+    ready = true
 }

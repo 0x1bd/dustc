@@ -25,7 +25,7 @@ class ContainerBlockEntityTest {
         val matrix = BlockMatrix(1, 1, 1)
         val position = BlockPos.ORIGIN
         val barrel = ContainerBlockEntity.barrelSignal(11)
-        matrix.setBlockAt(position, BlockType.BARREL.defaultState.with(Properties.FACING, Direction.EAST))
+        matrix.setBlockAt(position, BlockType.BARREL.defaultState.with(Properties.BLOCK_FACING, Direction.EAST))
         matrix.setBlockEntityAt(position, barrel)
 
         val read = SchematicReader().read(SchematicWriter().write(matrix, "barrel-round-trip"))
