@@ -1,0 +1,77 @@
+module sm83_rotate_accumulator(
+    input value: bits<8>,
+    input carry_in: bit,
+    input operation: bits<2>,
+    output result: bits<8>,
+    output flags: bits<4>,
+) {
+    let mut left_circular = const_bits<8>(0)
+    let mut left_carry = const_bits<8>(0)
+    let mut right_circular = const_bits<8>(0)
+    let mut right_carry = const_bits<8>(0)
+    left_circular[0] = value[7]
+    left_circular[1..8] = value[0..7]
+    left_carry[0] = carry_in
+    left_carry[1..8] = value[0..7]
+    right_circular[0..7] = value[1..8]
+    right_circular[7] = value[0]
+    right_carry[0..7] = value[1..8]
+    right_carry[7] = carry_in
+    let left = if operation[1] { left_carry } else { left_circular }
+    let right = if operation[1] { right_carry } else { right_circular }
+
+    result = if operation[0] { right } else { left }
+    flags[0] = if operation[0] { value[0] } else { value[7] }
+    flags[1] = false
+    flags[2] = false
+    flags[3] = false
+}
+
+module sm83_decimal_adjust(
+    input value: bits<8>,
+    input flags_in: bits<4>,
+    output result: bits<8>,
+    output flags: bits<4>,
+) {
+    let low_over_nine = value[3] & (value[2] | value[1])
+    let high_over_nine = value[7] & (value[6] | value[5])
+    let high_is_nine = value[7] & (~value[6]) & (~value[5]) & value[4]
+    let value_over_99 = high_over_nine | (high_is_nine & low_over_nine)
+    let subtracting = flags_in[2]
+    let adjust_low = flags_in[1] | ((~subtracting) & low_over_nine)
+    let adjust_high = flags_in[0] | ((~subtracting) & value_over_99)
+    let mut correction = const_bits<8>(0)
+    correction[1] = adjust_low
+    correction[2] = adjust_low
+    correction[5] = adjust_high
+    correction[6] = adjust_high
+    let added = ripple_add<8>(value, correction, false)
+    let subtracted = subtract<8>(value, correction, false)
+    let adjusted = if subtracting { subtracted.difference } else { added.sum }
+    let tested = sm83_zero8(adjusted)
+
+    result = adjusted
+    flags[0] = if subtracting { flags_in[0] } else { adjust_high }
+    flags[1] = false
+    flags[2] = subtracting
+    flags[3] = tested.zero
+}
+
+module sm83_add_sp_offset(
+    input sp: bits<16>,
+    input offset: bits<8>,
+    output result: bits<16>,
+    output flags: bits<4>,
+) {
+    let low_nibble = ripple_add<4>(sp[0..4], offset[0..4], false)
+    let high_nibble = ripple_add<4>(sp[4..8], offset[4..8], low_nibble.carry_out)
+    let mut signed_offset = const_bits<16>(0)
+    signed_offset[0..8] = offset
+    for i in 8..16 { signed_offset[i] = offset[7] }
+    let added = ripple_add<16>(sp, signed_offset, false)
+    result = added.sum
+    flags[0] = high_nibble.carry_out
+    flags[1] = low_nibble.carry_out
+    flags[2] = false
+    flags[3] = false
+}

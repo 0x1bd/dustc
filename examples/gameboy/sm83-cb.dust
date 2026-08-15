@@ -1,0 +1,74 @@
+module sm83_select_bit(input value: bits<8>, input select: bits<3>, output bit_value: bit) {
+    let low0 = if select[0] { value[1] } else { value[0] }
+    let low1 = if select[0] { value[3] } else { value[2] }
+    let high0 = if select[0] { value[5] } else { value[4] }
+    let high1 = if select[0] { value[7] } else { value[6] }
+    let low = if select[1] { low1 } else { low0 }
+    let high = if select[1] { high1 } else { high0 }
+    bit_value = if select[2] { high } else { low }
+}
+
+module sm83_cb_execute(
+    input value: bits<8>,
+    input flags_in: bits<4>,
+    input instruction: bits<8>,
+    output result: bits<8>,
+    output flags: bits<4>,
+    output write_value: bit,
+    output write_flags: bit,
+) {
+    let operation = instruction[3..6]
+    let group = instruction[6..8]
+    let mut rlc = const_bits<8>(0)
+    let mut rrc = const_bits<8>(0)
+    let mut rl = const_bits<8>(0)
+    let mut rr = const_bits<8>(0)
+    let mut sla = const_bits<8>(0)
+    let mut sra = const_bits<8>(0)
+    let mut swapped = const_bits<8>(0)
+    let mut srl = const_bits<8>(0)
+    rlc[0] = value[7]
+    rlc[1..8] = value[0..7]
+    rrc[0..7] = value[1..8]
+    rrc[7] = value[0]
+    rl[0] = flags_in[0]
+    rl[1..8] = value[0..7]
+    rr[0..7] = value[1..8]
+    rr[7] = flags_in[0]
+    sla[1..8] = value[0..7]
+    sra[0..7] = value[1..8]
+    sra[7] = value[7]
+    swapped[0..4] = value[4..8]
+    swapped[4..8] = value[0..4]
+    srl[0..7] = value[1..8]
+    let rotate01 = if operation[0] { rrc } else { rlc }
+    let rotate23 = if operation[0] { rr } else { rl }
+    let rotate45 = if operation[0] { sra } else { sla }
+    let rotate67 = if operation[0] { srl } else { swapped }
+    let rotate_low = if operation[1] { rotate23 } else { rotate01 }
+    let rotate_high = if operation[1] { rotate67 } else { rotate45 }
+    let rotated = if operation[2] { rotate_high } else { rotate_low }
+    let carry01 = if operation[0] { value[0] } else { value[7] }
+    let carry23 = if operation[0] { value[0] } else { value[7] }
+    let carry45 = if operation[0] { value[0] } else { value[7] }
+    let carry67 = if operation[0] { value[0] } else { false }
+    let carry_low = if operation[1] { carry23 } else { carry01 }
+    let carry_high = if operation[1] { carry67 } else { carry45 }
+    let rotate_carry = if operation[2] { carry_high } else { carry_low }
+    let selected_bit = sm83_select_bit(value, operation)
+    let mask = decode<8>(operation)
+    let reset_value = value & (~mask)
+    let set_value = value | mask
+    let modified_bit = if group[0] { set_value } else { reset_value }
+    let bit_group = (~group[1]) & group[0]
+    let rotate_group = (~group[1]) & (~group[0])
+    let tested = sm83_zero8(rotated)
+
+    result = if group[1] { modified_bit } else { if bit_group { value } else { rotated } }
+    flags[0] = if rotate_group { rotate_carry } else { flags_in[0] }
+    flags[1] = if bit_group { true } else { false }
+    flags[2] = false
+    flags[3] = if rotate_group { tested.zero } else { if bit_group { ~selected_bit.bit_value } else { flags_in[3] } }
+    write_value = ~bit_group
+    write_flags = rotate_group | bit_group
+}

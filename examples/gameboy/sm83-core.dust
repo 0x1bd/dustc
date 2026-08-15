@@ -33,6 +33,28 @@ module sm83_condition(
     taken = if select[1] { carry } else { zero }
 }
 
+module sm83_interrupt_priority(
+    input requests: bits<5>,
+    output pending: bit,
+    output index: bits<3>,
+    output selected: bits<5>,
+) {
+    let selected0 = requests[0]
+    let selected1 = (~requests[0]) & requests[1]
+    let selected2 = (~requests[0]) & (~requests[1]) & requests[2]
+    let selected3 = (~requests[0]) & (~requests[1]) & (~requests[2]) & requests[3]
+    let selected4 = (~requests[0]) & (~requests[1]) & (~requests[2]) & (~requests[3]) & requests[4]
+    selected[0] = selected0
+    selected[1] = selected1
+    selected[2] = selected2
+    selected[3] = selected3
+    selected[4] = selected4
+    pending = selected0 | selected1 | selected2 | selected3 | selected4
+    index[0] = selected1 | selected3
+    index[1] = selected2 | selected3
+    index[2] = selected4
+}
+
 module sm83_select_stack_pair(
     input select: bits<2>,
     input a: bits<8>,
@@ -63,11 +85,12 @@ module sm83_select_stack_pair(
 }
 
 module sm83_core_next(
-    input state: bits<120>,
+    input state: bits<127>,
     input memory_data: bits<8>,
     input memory_ready: bit,
     input wake: bit,
-    output next_state: bits<120>,
+    input interrupt_request: bits<5>,
+    output next_state: bits<127>,
 ) {
     let a = state[0..8]
     let flags = state[8..12]
@@ -83,8 +106,16 @@ module sm83_core_next(
     let operand = state[104..112]
     let high_operand = state[112..120]
     let sp = state[76..92]
+    let ime = state[120]
+    let ime_pending = state[121]
+    let interrupt_active = state[122]
+    let interrupt_index = state[123..126]
+    let suppress_pc_increment = state[126]
     let phases = decode<16>(phase)
     let decoded = sm83_instruction_decode(instruction)
+    let interrupt = sm83_interrupt_priority(interrupt_request)
+    let interrupt_accept = phases[0] & ime & interrupt.pending
+    let halt_bug = phases[1] & decoded.halt & (~ime) & interrupt.pending
     let condition = sm83_condition(instruction[3..5], flags)
     let source = sm83_read_port(decoded.source, b, c, d, e, h, l, memory_data, a)
     let target = sm83_read_port(decoded.destination, b, c, d, e, h, l, memory_data, a)
@@ -107,8 +138,8 @@ module sm83_core_next(
     let call_taken = decoded.call | (decoded.call_conditional & condition.taken)
     let return_instruction = decoded.ret | decoded.ret_conditional | decoded.reti
     let return_taken = decoded.ret | decoded.reti | (decoded.ret_conditional & condition.taken)
-    let stack_write_instruction = decoded.push | call_instruction | decoded.rst
-    let stack_read_instruction = decoded.pop | return_instruction
+    let stack_write_instruction = (decoded.push | call_instruction | decoded.rst) & (~interrupt_active)
+    let stack_read_instruction = (decoded.pop | return_instruction) & (~interrupt_active)
     let indirect_load = decoded.load_a_indirect | decoded.load_high_c
     let indirect_store = decoded.store_a_indirect | decoded.store_high_c
     let immediate8_load = decoded.load_high_immediate
@@ -120,10 +151,14 @@ module sm83_core_next(
     let direct_memory_transfer = indirect_load | indirect_store
     let addressed_memory_transfer = immediate8_load | immediate8_store |
         immediate16_load | immediate16_store
-    let two_byte_write_instruction = stack_write_instruction | decoded.store_sp_absolute
+    let two_byte_write_instruction = stack_write_instruction | decoded.store_sp_absolute | interrupt_active
     let direct_stack_instruction = decoded.push | decoded.pop | return_instruction | decoded.rst
+    let direct_misc_instruction = decoded.nop | decoded.rotate_a | decoded.daa | decoded.cpl |
+        decoded.scf | decoded.ccf | decoded.load_sp_hl | decoded.di | decoded.ei
+    let offset_instruction = decoded.add_sp_offset | decoded.load_hl_sp_offset
+    let cb_instruction = decoded.prefix_cb
     let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump |
-        immediate8_load | immediate8_store
+        immediate8_load | immediate8_store | decoded.stop | offset_instruction | cb_instruction
     let immediate16_instruction = decoded.load_immediate16 | absolute_jump | call_instruction |
         immediate16_load | immediate16_store | decoded.store_sp_absolute
     let immediate_instruction = immediate8_instruction | immediate16_instruction
@@ -131,7 +166,7 @@ module sm83_core_next(
     let read_operand = immediate_instruction | memory_alu | memory_load | memory_increment | memory_decrement
     let write_memory_direct = memory_store | direct_memory_transfer
     let direct_supported = direct_alu | direct_load | register_increment | register_decrement |
-        decoded.halt | decoded.jump_hl
+        decoded.halt | decoded.jump_hl | direct_misc_instruction
     let supported = direct_supported | read_operand | write_memory_direct | internal16_instruction |
         direct_stack_instruction
     let direct_commit = phases[1] & direct_supported & (~decoded.halt)
@@ -139,6 +174,13 @@ module sm83_core_next(
         (~memory_increment) & (~memory_decrement)
     let memory_commit = phases[6] & memory_ready
     let special_load_commit = memory_commit & special_load
+    let misc_commit = phases[1] & direct_misc_instruction
+    let offset_commit = phases[4] & offset_instruction
+    let cb_target_is_memory = operand[2] & operand[1] & (~operand[0])
+    let cb_direct_commit = phases[4] & cb_instruction & (~cb_target_is_memory)
+    let cb_memory_read_commit = phases[11] & memory_ready & cb_instruction & cb_target_is_memory
+    let cb_memory_commit = phases[15] & cb_instruction & cb_target_is_memory
+    let cb_commit = cb_direct_commit | cb_memory_commit
     let active_alu = (direct_commit & decoded.alu8) | (operand_commit & (decoded.alu8 | decoded.alu_immediate8))
     let active_increment = (direct_commit & register_increment) | (operand_commit & memory_increment)
     let active_decrement = (direct_commit & register_decrement) | (operand_commit & memory_decrement)
@@ -147,38 +189,84 @@ module sm83_core_next(
     let alu = sm83_alu(a, alu_right, flags[0], decoded.alu_operation)
     let incremented = sm83_inc8(target_value, flags[0])
     let decremented = sm83_dec8(target_value, flags[0])
+    let rotated_a = sm83_rotate_accumulator(a, flags[0], instruction[3..5])
+    let adjusted_a = sm83_decimal_adjust(a, flags)
+    let offset_sp = sm83_add_sp_offset(sp, operand)
+    let cb_source = sm83_read_port(operand[0..3], b, c, d, e, h, l, high_operand, a)
+    let cb_value = if cb_memory_commit { high_operand } else { cb_source.value }
+    let cb_result = sm83_cb_execute(cb_value, flags, operand)
+    let misc_a_write = misc_commit & (decoded.rotate_a | decoded.daa | decoded.cpl)
+    let cb_register_write = cb_direct_commit & cb_result.write_value
     let register_load = (direct_commit & direct_load) |
         (operand_commit & (memory_load | (decoded.load_immediate8 & (~destination_is_memory))))
     let register_write = register_load | (active_alu & alu.write_result) | active_increment | active_decrement |
-        special_load_commit
+        special_load_commit | misc_a_write | cb_register_write
     let flags_write = active_alu | active_increment | active_decrement |
-        (memory_commit & (memory_increment | memory_decrement))
-    let write_address = if active_alu | special_load_commit { const_bits<3>(7) } else { decoded.destination }
-    let load_data = if phases[4] { operand } else { source.value }
-    let write_data = if special_load_commit {
-        memory_data
+        (memory_commit & (memory_increment | memory_decrement)) |
+        (misc_commit & (decoded.rotate_a | decoded.daa | decoded.cpl | decoded.scf | decoded.ccf)) |
+        offset_commit | (cb_commit & cb_result.write_flags)
+    let write_address = if active_alu | special_load_commit | misc_a_write {
+        const_bits<3>(7)
     } else {
-        if active_alu {
-        alu.value
+        if cb_register_write { operand[0..3] } else { decoded.destination }
+    }
+    let load_data = if phases[4] { operand } else { source.value }
+    let write_data = if cb_register_write {
+        cb_result.result
+    } else {
+        if misc_a_write {
+            if decoded.rotate_a { rotated_a.result } else { if decoded.daa { adjusted_a.result } else { ~a } }
         } else {
-            if active_increment {
-                incremented.result
+            if special_load_commit {
+        memory_data
             } else {
-                if active_decrement { decremented.result } else { load_data }
+                if active_alu {
+                    alu.value
+                } else {
+                    if active_increment {
+                        incremented.result
+                    } else {
+                        if active_decrement { decremented.result } else { load_data }
+                    }
+                }
             }
         }
     }
-    let write_flags = if active_alu {
-        alu.flags
+    let mut misc_flags = flags
+    misc_flags[0] = if decoded.scf { true } else { if decoded.ccf { ~flags[0] } else { flags[0] } }
+    misc_flags[1] = if decoded.cpl { true } else { false }
+    misc_flags[2] = if decoded.cpl { true } else { false }
+    let write_flags = if cb_commit & cb_result.write_flags {
+        cb_result.flags
     } else {
-        if active_increment | (memory_commit & memory_increment) {
-            incremented.flags
+        if offset_commit {
+            offset_sp.flags
         } else {
-            decremented.flags
+            if misc_commit & decoded.rotate_a {
+                rotated_a.flags
+            } else {
+                if misc_commit & decoded.daa {
+                    adjusted_a.flags
+                } else {
+                    if misc_commit & (decoded.cpl | decoded.scf | decoded.ccf) {
+                        misc_flags
+                    } else {
+                        if active_alu {
+                            alu.flags
+                        } else {
+                            if active_increment | (memory_commit & memory_increment) {
+                                incremented.flags
+                            } else {
+                                decremented.flags
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     let selected = decode<8>(write_address)
-    let fetch_commit = phases[0] & memory_ready
+    let fetch_commit = phases[0] & memory_ready & (~interrupt_accept)
     let operand_read_commit = phases[3] & memory_ready
     let immediate_read_commit = operand_read_commit & immediate_instruction
     let immediate16_commit = phases[8] & decoded.load_immediate16
@@ -208,14 +296,18 @@ module sm83_core_next(
     let jump_hl_commit = phases[1] & decoded.jump_hl
     let first_two_byte_write_commit = phases[12] & memory_ready & two_byte_write_instruction
     let second_two_byte_write_commit = phases[14] & memory_ready & two_byte_write_instruction
-    let first_stack_write_commit = first_two_byte_write_commit & stack_write_instruction
-    let second_stack_write_commit = second_two_byte_write_commit & stack_write_instruction
+    let first_stack_write_commit = first_two_byte_write_commit & (stack_write_instruction | interrupt_active)
+    let second_stack_write_commit = second_two_byte_write_commit & (stack_write_instruction | interrupt_active)
     let first_stack_read_commit = phases[11] & memory_ready & stack_read_instruction
     let second_stack_read_commit = phases[13] & memory_ready & stack_read_instruction
     let pop_commit = phases[15] & decoded.pop
     let return_commit = phases[15] & return_taken
     let call_commit = second_stack_write_commit & call_taken
     let rst_commit = second_stack_write_commit & decoded.rst
+    let interrupt_commit = second_stack_write_commit & interrupt_active
+    let di_commit = misc_commit & decoded.di
+    let ei_commit = misc_commit & decoded.ei
+    let reti_commit = phases[15] & decoded.reti
     let hl_indirect_adjust_commit = memory_commit &
         (decoded.load_a_indirect | decoded.store_a_indirect) & instruction[5]
     let mut signed_operand = const_bits<16>(0)
@@ -227,6 +319,9 @@ module sm83_core_next(
     immediate16_value[8..16] = high_operand
     let mut rst_target = const_bits<16>(0)
     rst_target[3..6] = instruction[3..6]
+    let mut interrupt_target = const_bits<16>(0)
+    interrupt_target[3..6] = interrupt_index
+    interrupt_target[6] = true
     let write_after_operand = (decoded.load_immediate8 & destination_is_memory) |
         memory_increment | memory_decrement | addressed_memory_transfer
     let mut next = state
@@ -296,19 +391,23 @@ module sm83_core_next(
     next[44..52] = if pop_commit & pair2 {
         high_operand
     } else {
-        if hl_indirect_adjust_commit {
-            adjusted_hl[8..16]
+        if offset_commit & decoded.load_hl_sp_offset {
+            offset_sp.result[8..16]
         } else {
-            if immediate16_commit & pair2 {
-                high_operand
+            if hl_indirect_adjust_commit {
+                adjusted_hl[8..16]
             } else {
-                if add_hl_commit {
-                    added_hl.result[8..16]
+                if immediate16_commit & pair2 {
+                    high_operand
                 } else {
-                    if pair_write & pair2 {
-                        pair_write_value[8..16]
+                    if add_hl_commit {
+                        added_hl.result[8..16]
                     } else {
-                        if register_write & selected[4] { write_data } else { h }
+                        if pair_write & pair2 {
+                            pair_write_value[8..16]
+                        } else {
+                            if register_write & selected[4] { write_data } else { h }
+                        }
                     }
                 }
             }
@@ -317,46 +416,55 @@ module sm83_core_next(
     next[52..60] = if pop_commit & pair2 {
         operand
     } else {
-        if hl_indirect_adjust_commit {
-            adjusted_hl[0..8]
+        if offset_commit & decoded.load_hl_sp_offset {
+            offset_sp.result[0..8]
         } else {
-            if immediate16_commit & pair2 {
-                operand
+            if hl_indirect_adjust_commit {
+                adjusted_hl[0..8]
             } else {
-                if add_hl_commit {
-                    added_hl.result[0..8]
+                if immediate16_commit & pair2 {
+                    operand
                 } else {
-                    if pair_write & pair2 {
-                        pair_write_value[0..8]
+                    if add_hl_commit {
+                        added_hl.result[0..8]
                     } else {
-                        if register_write & selected[5] { write_data } else { l }
+                        if pair_write & pair2 {
+                            pair_write_value[0..8]
+                        } else {
+                            if register_write & selected[5] { write_data } else { l }
+                        }
                     }
                 }
             }
         }
     }
-    next[60..76] = if return_commit {
-        immediate16_value
+    next[60..76] = if interrupt_commit {
+        interrupt_target
     } else {
-        if call_commit {
-            immediate16_value
+        if return_commit {
+        immediate16_value
         } else {
-            if rst_commit {
-                rst_target
+            if call_commit {
+                immediate16_value
             } else {
-                if jump_hl_commit {
-        hl_value
+                if rst_commit {
+                    rst_target
                 } else {
-                    if relative_jump_commit {
-                        relative_target.sum
+                    if jump_hl_commit {
+                        hl_value
                     } else {
-                        if absolute_jump_commit {
-                            immediate16_value
+                        if relative_jump_commit {
+                            relative_target.sum
                         } else {
-                            if fetch_commit | immediate_read_commit | high_operand_read_commit {
-                                increment<16>(pc).result
+                            if absolute_jump_commit {
+                                immediate16_value
                             } else {
-                                pc
+                                if (fetch_commit & (~suppress_pc_increment)) |
+                                    immediate_read_commit | high_operand_read_commit {
+                                    increment<16>(pc).result
+                                } else {
+                                    pc
+                                }
                             }
                         }
                     }
@@ -370,22 +478,51 @@ module sm83_core_next(
         if first_stack_read_commit | second_stack_read_commit {
             increment<16>(sp).result
         } else {
-            if immediate16_commit & pair3 {
-                immediate16_value
+            if misc_commit & decoded.load_sp_hl {
+                hl_value
             } else {
-                if pair_write & pair3 { pair_write_value } else { sp }
+                if offset_commit & decoded.add_sp_offset {
+                    offset_sp.result
+                } else {
+                    if immediate16_commit & pair3 {
+                        immediate16_value
+                    } else {
+                        if pair_write & pair3 { pair_write_value } else { sp }
+                    }
+                }
             }
         }
     }
     next[92..100] = if fetch_commit { memory_data } else { instruction }
     next[104..112] = if operand_read_commit | first_stack_read_commit { memory_data } else { operand }
-    next[112..120] = if high_operand_read_commit | second_stack_read_commit { memory_data } else { high_operand }
+    next[112..120] = if high_operand_read_commit | second_stack_read_commit | cb_memory_read_commit {
+        memory_data
+    } else {
+        high_operand
+    }
+    next[120] = if interrupt_accept | di_commit {
+        false
+    } else {
+        if reti_commit | (fetch_commit & ime_pending) { true } else { ime }
+    }
+    next[121] = if di_commit {
+        false
+    } else {
+        if ei_commit { true } else { if fetch_commit { false } else { ime_pending } }
+    }
+    next[122] = if interrupt_accept { true } else { if interrupt_commit { false } else { interrupt_active } }
+    next[123..126] = if interrupt_accept { interrupt.index } else { interrupt_index }
+    next[126] = if halt_bug { true } else { if fetch_commit { false } else { suppress_pc_increment } }
     next[100..104] = if phases[0] {
-        if memory_ready { const_bits<4>(1) } else { const_bits<4>(0) }
+        if interrupt_accept {
+            const_bits<4>(11)
+        } else {
+            if memory_ready { const_bits<4>(1) } else { const_bits<4>(0) }
+        }
     } else {
         if phases[1] {
             if decoded.halt {
-                const_bits<4>(2)
+                if halt_bug { const_bits<4>(0) } else { const_bits<4>(2) }
             } else {
                 if internal16_instruction {
                     const_bits<4>(9)
@@ -407,7 +544,7 @@ module sm83_core_next(
             }
         } else {
             if phases[2] {
-                if wake { const_bits<4>(0) } else { const_bits<4>(2) }
+                if wake | interrupt.pending { const_bits<4>(0) } else { const_bits<4>(2) }
             } else {
                 if phases[3] {
                     if memory_ready { const_bits<4>(4) } else { const_bits<4>(3) }
@@ -416,10 +553,18 @@ module sm83_core_next(
                         if immediate16_instruction {
                             const_bits<4>(7)
                         } else {
-                            if relative_jump {
-                                if relative_jump_taken { const_bits<4>(9) } else { const_bits<4>(0) }
+                            if cb_instruction {
+                                if cb_target_is_memory { const_bits<4>(11) } else { const_bits<4>(0) }
                             } else {
-                                if write_after_operand { const_bits<4>(5) } else { const_bits<4>(0) }
+                                if decoded.stop {
+                                    const_bits<4>(2)
+                                } else {
+                                    if relative_jump {
+                                        if relative_jump_taken { const_bits<4>(9) } else { const_bits<4>(0) }
+                                    } else {
+                                        if write_after_operand { const_bits<4>(5) } else { const_bits<4>(0) }
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -458,14 +603,26 @@ module sm83_core_next(
                                             const_bits<4>(0)
                                         } else {
                                             if phases[11] {
-                                                if two_byte_write_instruction {
-                                                    const_bits<4>(12)
+                                                if cb_instruction & cb_target_is_memory {
+                                                    if memory_ready {
+                                                        if cb_result.write_value { const_bits<4>(12) } else { const_bits<4>(15) }
+                                                    } else {
+                                                        const_bits<4>(11)
+                                                    }
                                                 } else {
-                                                    if memory_ready { const_bits<4>(13) } else { const_bits<4>(11) }
+                                                    if two_byte_write_instruction {
+                                                    const_bits<4>(12)
+                                                    } else {
+                                                        if memory_ready { const_bits<4>(13) } else { const_bits<4>(11) }
+                                                    }
                                                 }
                                             } else {
                                                 if phases[12] {
-                                                    if memory_ready { const_bits<4>(13) } else { const_bits<4>(12) }
+                                                    if cb_instruction & cb_target_is_memory {
+                                                        if memory_ready { const_bits<4>(15) } else { const_bits<4>(12) }
+                                                    } else {
+                                                        if memory_ready { const_bits<4>(13) } else { const_bits<4>(12) }
+                                                    }
                                                 } else {
                                                     if phases[13] {
                                                         if two_byte_write_instruction {
@@ -500,12 +657,15 @@ module main(
     input memory_data: bits<8>,
     input memory_ready: bit,
     input wake: bit,
+    input interrupt_request: bits<5>,
     input reset: bit,
     input clock: bit,
     output memory_address: bits<16>,
     output memory_read: bit,
     output memory_write: bit,
     output memory_write_data: bits<8>,
+    output interrupt_ack: bits<5>,
+    output interrupt_master_enable: bit,
     output halted: bit,
     output unsupported: bit,
     output pc: bits<16>,
@@ -520,8 +680,8 @@ module main(
     output h: bits<8>,
     output l: bits<8>,
 ) {
-    let rec state = resettable_register<120>(
-        sm83_core_next(state, memory_data, memory_ready, wake).next_state,
+    let rec state = resettable_register<127>(
+        sm83_core_next(state, memory_data, memory_ready, wake, interrupt_request).next_state,
         reset,
         clock,
     )
@@ -530,6 +690,8 @@ module main(
     let phase = state[100..104]
     let phases = decode<16>(phase)
     let operand = state[104..112]
+    let interrupt_active = state[122]
+    let interrupt = sm83_interrupt_priority(interrupt_request)
     let source_is_memory = decoded.source[2] & decoded.source[1] & (~decoded.source[0])
     let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
     let direct_alu = decoded.alu8 & (~source_is_memory)
@@ -545,8 +707,8 @@ module main(
     let absolute_jump = decoded.jump_absolute | decoded.jump_absolute_conditional
     let call_instruction = decoded.call | decoded.call_conditional
     let return_instruction = decoded.ret | decoded.ret_conditional | decoded.reti
-    let stack_write_instruction = decoded.push | call_instruction | decoded.rst
-    let stack_read_instruction = decoded.pop | return_instruction
+    let stack_write_instruction = (decoded.push | call_instruction | decoded.rst) & (~interrupt_active)
+    let stack_read_instruction = (decoded.pop | return_instruction) & (~interrupt_active)
     let indirect_load = decoded.load_a_indirect | decoded.load_high_c
     let indirect_store = decoded.store_a_indirect | decoded.store_high_c
     let immediate8_load = decoded.load_high_immediate
@@ -558,17 +720,21 @@ module main(
     let direct_memory_transfer = indirect_load | indirect_store
     let addressed_memory_transfer = immediate8_load | immediate8_store |
         immediate16_load | immediate16_store
-    let two_byte_write_instruction = stack_write_instruction | decoded.store_sp_absolute
+    let two_byte_write_instruction = stack_write_instruction | decoded.store_sp_absolute | interrupt_active
     let direct_stack_instruction = decoded.push | decoded.pop | return_instruction | decoded.rst
+    let direct_misc_instruction = decoded.nop | decoded.rotate_a | decoded.daa | decoded.cpl |
+        decoded.scf | decoded.ccf | decoded.load_sp_hl | decoded.di | decoded.ei
+    let offset_instruction = decoded.add_sp_offset | decoded.load_hl_sp_offset
+    let cb_instruction = decoded.prefix_cb
     let immediate8_instruction = decoded.load_immediate8 | decoded.alu_immediate8 | relative_jump |
-        immediate8_load | immediate8_store
+        immediate8_load | immediate8_store | decoded.stop | offset_instruction | cb_instruction
     let immediate16_instruction = decoded.load_immediate16 | absolute_jump | call_instruction |
         immediate16_load | immediate16_store | decoded.store_sp_absolute
     let immediate_instruction = immediate8_instruction | immediate16_instruction
     let internal16_instruction = decoded.inc16 | decoded.dec16 | decoded.add_hl16
     let read_operand = immediate_instruction | memory_alu | memory_load | memory_increment | memory_decrement
     let direct_supported = direct_alu | direct_load | register_increment | register_decrement |
-        decoded.halt | decoded.jump_hl
+        decoded.halt | decoded.jump_hl | direct_misc_instruction
     let supported = direct_supported | read_operand | memory_store | internal16_instruction |
         direct_stack_instruction | direct_memory_transfer
     let source = sm83_read_port(
@@ -595,13 +761,14 @@ module main(
         state[44..52],
         state[52..60],
     )
+    let cb_result = sm83_cb_execute(state[112..120], state[8..12], operand)
     let mut hl = const_bits<16>(0)
     let mut bc = const_bits<16>(0)
     let mut de = const_bits<16>(0)
     let mut immediate_address = const_bits<16>(0)
     let mut high_address = const_bits<16>(0)
     let mut full_flags = const_bits<8>(0)
-    let stack_write_value = if decoded.push { stack_pair.value } else { state[60..76] }
+    let stack_write_value = if decoded.push & (~interrupt_active) { stack_pair.value } else { state[60..76] }
     hl[0..8] = state[52..60]
     hl[8..16] = state[44..52]
     bc[0..8] = state[20..28]
@@ -629,57 +796,70 @@ module main(
         }
     }
 
-    memory_address = if two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
-        if decoded.store_sp_absolute {
+    memory_address = if cb_instruction & (phases[11] | phases[12]) {
+        hl
+    } else {
+        if two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
+        if decoded.store_sp_absolute & (~interrupt_active) {
             if phases[11] | phases[12] { immediate_address } else { increment<16>(immediate_address).result }
         } else {
             decrement<16>(state[76..92]).result
         }
-    } else {
-        if stack_read_instruction & (phases[11] | phases[13]) {
-            state[76..92]
         } else {
-            if phases[3] | phases[7] {
-                if immediate_instruction { state[60..76] } else { hl }
+            if stack_read_instruction & (phases[11] | phases[13]) {
+                state[76..92]
             } else {
-                if phases[5] | phases[6] {
-                    if special_load | special_store { special_address } else { hl }
+                if phases[3] | phases[7] {
+                    if immediate_instruction { state[60..76] } else { hl }
                 } else {
-                    state[60..76]
+                    if phases[5] | phases[6] {
+                        if special_load | special_store { special_address } else { hl }
+                    } else {
+                        state[60..76]
+                    }
                 }
             }
         }
     }
-    memory_read = phases[0] | phases[3] | phases[7] |
+    memory_read = (phases[0] & (~(state[120] & interrupt.pending))) | phases[3] | phases[7] |
         (stack_read_instruction & (phases[11] | phases[13])) |
-        (special_load & (phases[5] | phases[6]))
+        (special_load & (phases[5] | phases[6])) |
+        (cb_instruction & phases[11])
     let single_memory_write = memory_store | (decoded.load_immediate8 & destination_is_memory) |
         memory_increment | memory_decrement | special_store
     memory_write = (single_memory_write & (phases[5] | phases[6])) |
-        (two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]))
-    memory_write_data = if two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
-        if decoded.store_sp_absolute {
+        (two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14])) |
+        (cb_instruction & phases[12] & cb_result.write_value)
+    memory_write_data = if cb_instruction & phases[12] {
+        cb_result.result
+    } else {
+        if two_byte_write_instruction & (phases[11] | phases[12] | phases[13] | phases[14]) {
+        if decoded.store_sp_absolute & (~interrupt_active) {
             if phases[11] | phases[12] { state[76..84] } else { state[84..92] }
         } else {
             if phases[11] | phases[12] { stack_write_value[8..16] } else { stack_write_value[0..8] }
         }
-    } else {
-        if special_store {
-            state[0..8]
         } else {
-            if decoded.load_immediate8 & destination_is_memory {
-            operand
+            if special_store {
+                state[0..8]
             } else {
-                if memory_increment {
-                    incremented.result
+                if decoded.load_immediate8 & destination_is_memory {
+                    operand
                 } else {
-                    if memory_decrement { decremented.result } else { source.value }
+                    if memory_increment {
+                        incremented.result
+                    } else {
+                        if memory_decrement { decremented.result } else { source.value }
+                    }
                 }
             }
         }
     }
     halted = phases[2]
     unsupported = phases[1] & (~supported)
+    let acknowledged = decode<8>(state[123..126])
+    for i in 0..5 { interrupt_ack[i] = acknowledged[i] & interrupt_active & phases[14] & memory_ready }
+    interrupt_master_enable = state[120]
     pc = state[60..76]
     sp = state[76..92]
     instruction = instruction_value

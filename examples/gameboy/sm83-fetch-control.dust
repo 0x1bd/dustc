@@ -36,6 +36,19 @@ module sm83_instruction_decode(
     output load_a_absolute: bit,
     output store_a_absolute: bit,
     output store_sp_absolute: bit,
+    output nop: bit,
+    output stop: bit,
+    output rotate_a: bit,
+    output daa: bit,
+    output cpl: bit,
+    output scf: bit,
+    output ccf: bit,
+    output add_sp_offset: bit,
+    output load_hl_sp_offset: bit,
+    output load_sp_hl: bit,
+    output di: bit,
+    output ei: bit,
+    output prefix_cb: bit,
     output block_three: bit,
     output halt: bit,
 ) {
@@ -80,6 +93,20 @@ module sm83_instruction_decode(
         instruction[1] & (~instruction[0])
     let absolute_sp = zero & (~instruction[5]) & (~instruction[4]) & instruction[3] &
         (~instruction[2]) & (~instruction[1]) & (~instruction[0])
+    let no_operation = zero & (~instruction[5]) & (~instruction[4]) & (~instruction[3]) &
+        (~instruction[2]) & (~instruction[1]) & (~instruction[0])
+    let stopped = zero & (~instruction[5]) & instruction[4] & (~instruction[3]) &
+        (~instruction[2]) & (~instruction[1]) & (~instruction[0])
+    let accumulator_rotate = zero & (~instruction[5]) & instruction[2] & instruction[1] & instruction[0]
+    let accumulator_misc = zero & instruction[5] & instruction[2] & instruction[1] & instruction[0]
+    let sp_offset = three & instruction[5] & instruction[3] & (~instruction[2]) &
+        (~instruction[1]) & (~instruction[0])
+    let sp_from_hl = three & instruction[5] & instruction[4] & instruction[3] &
+        (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let interrupt_control = three & instruction[5] & instruction[4] & (~instruction[2]) &
+        instruction[1] & instruction[0]
+    let cb_prefix = three & (~instruction[5]) & (~instruction[4]) & instruction[3] &
+        (~instruction[2]) & instruction[1] & instruction[0]
     let source_is_six = instruction[2] & instruction[1] & (~instruction[0])
     let destination_is_six = instruction[5] & instruction[4] & (~instruction[3])
     let is_halt = load & source_is_six & destination_is_six
@@ -120,6 +147,19 @@ module sm83_instruction_decode(
     load_a_absolute = absolute_a & instruction[4]
     store_a_absolute = absolute_a & (~instruction[4])
     store_sp_absolute = absolute_sp
+    nop = no_operation
+    stop = stopped
+    rotate_a = accumulator_rotate
+    daa = accumulator_misc & (~instruction[4]) & (~instruction[3])
+    cpl = accumulator_misc & (~instruction[4]) & instruction[3]
+    scf = accumulator_misc & instruction[4] & (~instruction[3])
+    ccf = accumulator_misc & instruction[4] & instruction[3]
+    add_sp_offset = sp_offset & (~instruction[4])
+    load_hl_sp_offset = sp_offset & instruction[4]
+    load_sp_hl = sp_from_hl
+    di = interrupt_control & (~instruction[3])
+    ei = interrupt_control & instruction[3]
+    prefix_cb = cb_prefix
     block_three = three
     halt = is_halt
 }
@@ -231,6 +271,19 @@ module sm83_fetch_control_demo(
         load_a_absolute: bit,
         store_a_absolute: bit,
         store_sp_absolute: bit,
+        nop: bit,
+        stop: bit,
+        rotate_a: bit,
+        daa: bit,
+        cpl: bit,
+        scf: bit,
+        ccf: bit,
+        add_sp_offset: bit,
+        load_hl_sp_offset: bit,
+        load_sp_hl: bit,
+        di: bit,
+        ei: bit,
+        prefix_cb: bit,
         block_three: bit,
         halt: bit,
     },
@@ -288,6 +341,19 @@ module sm83_fetch_control_demo(
     load_a_absolute = decoded.load_a_absolute
     store_a_absolute = decoded.store_a_absolute
     store_sp_absolute = decoded.store_sp_absolute
+    nop = decoded.nop
+    stop = decoded.stop
+    rotate_a = decoded.rotate_a
+    daa = decoded.daa
+    cpl = decoded.cpl
+    scf = decoded.scf
+    ccf = decoded.ccf
+    add_sp_offset = decoded.add_sp_offset
+    load_hl_sp_offset = decoded.load_hl_sp_offset
+    load_sp_hl = decoded.load_sp_hl
+    di = decoded.di
+    ei = decoded.ei
+    prefix_cb = decoded.prefix_cb
     block_three = decoded.block_three
     halt = decoded.halt
 }
