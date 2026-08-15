@@ -1,0 +1,146 @@
+module sm83_instruction_decode(
+    input instruction: bits<8>,
+    output source: bits<3>,
+    output destination: bits<3>,
+    output alu_operation: bits<3>,
+    output block_zero: bit,
+    output load8: bit,
+    output alu8: bit,
+    output inc8: bit,
+    output dec8: bit,
+    output block_three: bit,
+    output halt: bit,
+) {
+    let zero = (~instruction[7]) & (~instruction[6])
+    let load = (~instruction[7]) & instruction[6]
+    let arithmetic = instruction[7] & (~instruction[6])
+    let three = instruction[7] & instruction[6]
+    let increment = zero & instruction[2] & (~instruction[1]) & (~instruction[0])
+    let decrement = zero & instruction[2] & (~instruction[1]) & instruction[0]
+    let source_is_six = instruction[2] & instruction[1] & (~instruction[0])
+    let destination_is_six = instruction[5] & instruction[4] & (~instruction[3])
+    let is_halt = load & source_is_six & destination_is_six
+
+    source = instruction[0..3]
+    destination = instruction[3..6]
+    alu_operation = instruction[3..6]
+    block_zero = zero
+    load8 = load & (~is_halt)
+    alu8 = arithmetic
+    inc8 = increment
+    dec8 = decrement
+    block_three = three
+    halt = is_halt
+}
+
+module sm83_fetch_control(
+    input memory_ready: bit,
+    input execute_ready: bit,
+    input execute_memory_read: bit,
+    input halt_request: bit,
+    input wake: bit,
+    input reset: bit,
+    input clock: bit,
+    output memory_read: bit,
+    output instruction_load: bit,
+    output pc_increment: bit,
+    output fetch: bit,
+    output execute: bit,
+    output commit: bit,
+    output halted: bit,
+) {
+    let rec phase = resettable_register<2>(
+        if phase[1] {
+            if wake { const_bits<2>(0) } else { const_bits<2>(2) }
+        } else {
+            if phase[0] {
+                if execute_ready {
+                    if halt_request { const_bits<2>(2) } else { const_bits<2>(0) }
+                } else {
+                    const_bits<2>(1)
+                }
+            } else {
+                if memory_ready { const_bits<2>(1) } else { const_bits<2>(0) }
+            }
+        },
+        reset,
+        clock,
+    )
+    let fetching = (~phase[1]) & (~phase[0])
+    let executing = (~phase[1]) & phase[0]
+    let stopped = phase[1]
+    let accepted = fetching & memory_ready
+
+    memory_read = fetching | (executing & execute_memory_read)
+    instruction_load = accepted
+    pc_increment = accepted
+    fetch = fetching
+    execute = executing
+    commit = executing & execute_ready
+    halted = stopped
+}
+
+module sm83_fetch_control_demo(
+    #[panel]
+    input control {
+        instruction: bits<8>,
+        memory_ready: bit,
+        execute_ready: bit,
+        execute_memory_read: bit,
+        halt_request: bit,
+        wake: bit,
+        reset: bit,
+        clock: bit,
+    },
+    #[panel]
+    output phase {
+        memory_read: bit,
+        instruction_load: bit,
+        pc_increment: bit,
+        fetch: bit,
+        execute: bit,
+        commit: bit,
+        halted: bit,
+    },
+    #[panel]
+    output decode {
+        source: bits<3>,
+        destination: bits<3>,
+        alu_operation: bits<3>,
+        block_zero: bit,
+        load8: bit,
+        alu8: bit,
+        inc8: bit,
+        dec8: bit,
+        block_three: bit,
+        halt: bit,
+    },
+) {
+    let sequencer = sm83_fetch_control(
+        memory_ready,
+        execute_ready,
+        execute_memory_read,
+        halt_request,
+        wake,
+        reset,
+        clock,
+    )
+    let decoded = sm83_instruction_decode(instruction)
+    memory_read = sequencer.memory_read
+    instruction_load = sequencer.instruction_load
+    pc_increment = sequencer.pc_increment
+    fetch = sequencer.fetch
+    execute = sequencer.execute
+    commit = sequencer.commit
+    halted = sequencer.halted
+    source = decoded.source
+    destination = decoded.destination
+    alu_operation = decoded.alu_operation
+    block_zero = decoded.block_zero
+    load8 = decoded.load8
+    alu8 = decoded.alu8
+    inc8 = decoded.inc8
+    dec8 = decoded.dec8
+    block_three = decoded.block_three
+    halt = decoded.halt
+}

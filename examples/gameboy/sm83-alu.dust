@@ -1,0 +1,150 @@
+module sm83_zero8(input value: bits<8>, output zero: bit) {
+    let mut all_zero = true
+    for i in 0..8 { all_zero = all_zero & (~value[i]) }
+    zero = all_zero
+}
+
+module sm83_add8(
+    input left: bits<8>,
+    input right: bits<8>,
+    input carry_in: bit,
+    output value: bits<8>,
+    output flags: bits<4>,
+) {
+    let low = ripple_add<4>(left[0..4], right[0..4], carry_in)
+    let high = ripple_add<4>(left[4..8], right[4..8], low.carry_out)
+    let mut result = const_bits<8>(0)
+    result[0..4] = low.sum
+    result[4..8] = high.sum
+    let tested = sm83_zero8(result)
+
+    value = result
+    flags[0] = high.carry_out
+    flags[1] = low.carry_out
+    flags[2] = false
+    flags[3] = tested.zero
+}
+
+module sm83_sub8(
+    input left: bits<8>,
+    input right: bits<8>,
+    input carry_in: bit,
+    output value: bits<8>,
+    output flags: bits<4>,
+) {
+    let low = subtract<4>(left[0..4], right[0..4], carry_in)
+    let high = subtract<4>(left[4..8], right[4..8], low.borrow_out)
+    let mut result = const_bits<8>(0)
+    result[0..4] = low.difference
+    result[4..8] = high.difference
+    let tested = sm83_zero8(result)
+
+    value = result
+    flags[0] = high.borrow_out
+    flags[1] = low.borrow_out
+    flags[2] = true
+    flags[3] = tested.zero
+}
+
+module sm83_logic8(
+    input left: bits<8>,
+    input right: bits<8>,
+    input operation: bits<2>,
+    output value: bits<8>,
+    output flags: bits<4>,
+) {
+    let and_or_xor = if operation[1] {
+        left | right
+    } else {
+        if operation[0] { left ^ right } else { left & right }
+    }
+    let tested = sm83_zero8(and_or_xor)
+
+    value = and_or_xor
+    flags[0] = false
+    flags[1] = (~operation[1]) & (~operation[0])
+    flags[2] = false
+    flags[3] = tested.zero
+}
+
+module sm83_alu(
+    input left: bits<8>,
+    input right: bits<8>,
+    input carry_in: bit,
+    input operation: bits<3>,
+    output value: bits<8>,
+    output flags: bits<4>,
+    output write_result: bit,
+) {
+    let use_carry = carry_in & operation[0] & (~operation[2])
+    let added = sm83_add8(left, right, use_carry)
+    let subtracted = sm83_sub8(left, right, use_carry)
+    let logical = sm83_logic8(left, right, operation[0..2])
+    let arithmetic_value = if operation[1] { subtracted.value } else { added.value }
+    let arithmetic_flags = if operation[1] { subtracted.flags } else { added.flags }
+    let compare = operation[2] & operation[1] & operation[0]
+
+    value = if operation[2] {
+        if compare { left } else { logical.value }
+    } else {
+        arithmetic_value
+    }
+    flags = if operation[2] {
+        if compare { subtracted.flags } else { logical.flags }
+    } else {
+        arithmetic_flags
+    }
+    write_result = ~compare
+}
+
+module sm83_inc8(
+    input value: bits<8>,
+    input carry_in: bit,
+    output result: bits<8>,
+    output flags: bits<4>,
+) {
+    let incremented = sm83_add8(value, const_bits<8>(1), false)
+    result = incremented.value
+    flags[0] = carry_in
+    flags[1] = incremented.flags[1]
+    flags[2] = false
+    flags[3] = incremented.flags[3]
+}
+
+module sm83_dec8(
+    input value: bits<8>,
+    input carry_in: bit,
+    output result: bits<8>,
+    output flags: bits<4>,
+) {
+    let decremented = sm83_sub8(value, const_bits<8>(1), false)
+    result = decremented.value
+    flags[0] = carry_in
+    flags[1] = decremented.flags[1]
+    flags[2] = true
+    flags[3] = decremented.flags[3]
+}
+
+module sm83_alu_demo(
+    #[panel]
+    input operands {
+        left: bits<8>,
+        right: bits<8>,
+        carry_in: bit,
+    },
+    #[panel]
+    input control {
+        operation: bits<3>,
+    },
+    #[panel]
+    output result {
+        value: bits<8>,
+        flags: bits<4>,
+        write_result: bit,
+    },
+) {
+    let calculated = sm83_alu(left, right, carry_in, operation)
+    value = calculated.value
+    flags = calculated.flags
+    write_result = calculated.write_result
+}

@@ -1,0 +1,130 @@
+module sm83_core_next(
+    input state: bits<102>,
+    input memory_data: bits<8>,
+    input memory_ready: bit,
+    input wake: bit,
+    output next_state: bits<102>,
+) {
+    let a = state[0..8]
+    let flags = state[8..12]
+    let b = state[12..20]
+    let c = state[20..28]
+    let d = state[28..36]
+    let e = state[36..44]
+    let h = state[44..52]
+    let l = state[52..60]
+    let pc = state[60..76]
+    let instruction = state[92..100]
+    let phase = state[100..102]
+    let decoded = sm83_instruction_decode(instruction)
+    let source = sm83_read_port(decoded.source, b, c, d, e, h, l, memory_data, a)
+    let target = sm83_read_port(decoded.destination, b, c, d, e, h, l, memory_data, a)
+    let alu = sm83_alu(a, source.value, flags[0], decoded.alu_operation)
+    let incremented = sm83_inc8(target.value, flags[0])
+    let decremented = sm83_dec8(target.value, flags[0])
+    let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
+    let source_is_memory = decoded.source[2] & decoded.source[1] & (~decoded.source[0])
+    let register_increment = decoded.inc8 & (~destination_is_memory)
+    let register_decrement = decoded.dec8 & (~destination_is_memory)
+    let memory_alu = decoded.alu8 & source_is_memory
+    let supported = decoded.alu8 | register_increment | register_decrement | decoded.halt
+    let execute_ready = supported & if memory_alu { memory_ready } else { true }
+    let fetching = (~phase[1]) & (~phase[0])
+    let executing = (~phase[1]) & phase[0]
+    let stopped = phase[1]
+    let fetch_commit = fetching & memory_ready
+    let execute_commit = executing & execute_ready
+    let register_commit = execute_commit & (decoded.alu8 | register_increment | register_decrement)
+    let flags_commit = register_commit
+    let write_enable = register_commit & if decoded.alu8 { alu.write_result } else { true }
+    let write_address = if decoded.alu8 { const_bits<3>(7) } else { decoded.destination }
+    let write_data = if decoded.alu8 {
+        alu.value
+    } else {
+        if register_increment { incremented.result } else { decremented.result }
+    }
+    let write_flags = if decoded.alu8 {
+        alu.flags
+    } else {
+        if register_increment { incremented.flags } else { decremented.flags }
+    }
+    let selected = decode<8>(write_address)
+    let mut next = state
+
+    next[0..8] = if write_enable & selected[7] { write_data } else { a }
+    next[8..12] = if flags_commit { write_flags } else { flags }
+    next[12..20] = if write_enable & selected[0] { write_data } else { b }
+    next[20..28] = if write_enable & selected[1] { write_data } else { c }
+    next[28..36] = if write_enable & selected[2] { write_data } else { d }
+    next[36..44] = if write_enable & selected[3] { write_data } else { e }
+    next[44..52] = if write_enable & selected[4] { write_data } else { h }
+    next[52..60] = if write_enable & selected[5] { write_data } else { l }
+    next[60..76] = if fetch_commit { increment<16>(pc).result } else { pc }
+    next[92..100] = if fetch_commit { memory_data } else { instruction }
+    next[100..102] = if stopped {
+        if wake { const_bits<2>(0) } else { const_bits<2>(2) }
+    } else {
+        if executing {
+            if execute_ready {
+                if decoded.halt { const_bits<2>(2) } else { const_bits<2>(0) }
+            } else {
+                const_bits<2>(1)
+            }
+        } else {
+            if memory_ready { const_bits<2>(1) } else { const_bits<2>(0) }
+        }
+    }
+    next_state = next
+}
+
+module main(
+    input memory_data: bits<8>,
+    input memory_ready: bit,
+    input wake: bit,
+    input reset: bit,
+    input clock: bit,
+    output memory_address: bits<16>,
+    output memory_read: bit,
+    output memory_write: bit,
+    output memory_write_data: bits<8>,
+    output halted: bit,
+    output unsupported: bit,
+    output pc: bits<16>,
+    output sp: bits<16>,
+    output instruction: bits<8>,
+    output a: bits<8>,
+    output f: bits<8>,
+) {
+    let rec state = resettable_register<102>(
+        sm83_core_next(state, memory_data, memory_ready, wake).next_state,
+        reset,
+        clock,
+    )
+    let decoded = sm83_instruction_decode(state[92..100])
+    let destination_is_memory = decoded.destination[2] & decoded.destination[1] & (~decoded.destination[0])
+    let source_is_memory = decoded.source[2] & decoded.source[1] & (~decoded.source[0])
+    let register_increment = decoded.inc8 & (~destination_is_memory)
+    let register_decrement = decoded.dec8 & (~destination_is_memory)
+    let memory_alu = decoded.alu8 & source_is_memory
+    let supported = decoded.alu8 | register_increment | register_decrement | decoded.halt
+    let phase = state[100..102]
+    let fetching = (~phase[1]) & (~phase[0])
+    let executing = (~phase[1]) & phase[0]
+    let mut hl = const_bits<16>(0)
+    let mut full_flags = const_bits<8>(0)
+    hl[0..8] = state[52..60]
+    hl[8..16] = state[44..52]
+    full_flags[4..8] = state[8..12]
+
+    memory_address = if executing & memory_alu { hl } else { state[60..76] }
+    memory_read = fetching | (executing & memory_alu)
+    memory_write = false
+    memory_write_data = const_bits<8>(0)
+    halted = phase[1]
+    unsupported = executing & (~supported)
+    pc = state[60..76]
+    sp = state[76..92]
+    instruction = state[92..100]
+    a = state[0..8]
+    f = full_flags
+}

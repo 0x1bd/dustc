@@ -96,7 +96,7 @@ module sm83_register_file(
     f[4..8] = stored_flags
 }
 
-module main(
+module sm83_register_file_demo(
     #[panel]
     input control {
         write_enable: bit,

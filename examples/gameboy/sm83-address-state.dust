@@ -1,0 +1,118 @@
+module sm83_address_state(
+    input control {
+        pc_load: bit,
+        pc_load_data: bits<16>,
+        pc_increment: bit,
+        sp_load: bit,
+        sp_load_data: bits<16>,
+        sp_adjust: bit,
+        sp_decrement: bit,
+        instruction_load: bit,
+        reset: bit,
+        clock: bit,
+    },
+    input address_sources {
+        address_select: bits<2>,
+        hl: bits<16>,
+        external_address: bits<16>,
+        memory_data: bits<8>,
+    },
+    output state {
+        pc: bits<16>,
+        sp: bits<16>,
+        instruction: bits<8>,
+    },
+    output bus {
+        address: bits<16>,
+    },
+) {
+    let rec stored_pc = resettable_register<16>(
+        if pc_load {
+            pc_load_data
+        } else {
+            if pc_increment { increment<16>(stored_pc).result } else { stored_pc }
+        },
+        reset,
+        clock,
+    )
+    let rec stored_sp = resettable_register<16>(
+        if sp_load {
+            sp_load_data
+        } else {
+            if sp_adjust {
+                if sp_decrement {
+                    decrement<16>(stored_sp).result
+                } else {
+                    increment<16>(stored_sp).result
+                }
+            } else {
+                stored_sp
+            }
+        },
+        reset,
+        clock,
+    )
+    let rec stored_instruction = resettable_register<8>(
+        if instruction_load { memory_data } else { stored_instruction },
+        reset,
+        clock,
+    )
+
+    let pc_or_sp = if address_select[0] { stored_sp } else { stored_pc }
+    let hl_or_external = if address_select[0] { external_address } else { hl }
+    address = if address_select[1] { hl_or_external } else { pc_or_sp }
+    pc = stored_pc
+    sp = stored_sp
+    instruction = stored_instruction
+}
+
+module sm83_address_state_demo(
+    #[panel]
+    input control {
+        pc_load: bit,
+        pc_load_data: bits<16>,
+        pc_increment: bit,
+        sp_load: bit,
+        sp_load_data: bits<16>,
+        sp_adjust: bit,
+        sp_decrement: bit,
+        instruction_load: bit,
+        reset: bit,
+        clock: bit,
+    },
+    #[panel]
+    input address_sources {
+        address_select: bits<2>,
+        hl: bits<16>,
+        external_address: bits<16>,
+        memory_data: bits<8>,
+    },
+    #[panel]
+    output state {
+        pc: bits<16>,
+        sp: bits<16>,
+        instruction: bits<8>,
+        address: bits<16>,
+    },
+) {
+    let registers = sm83_address_state(
+        pc_load,
+        pc_load_data,
+        pc_increment,
+        sp_load,
+        sp_load_data,
+        sp_adjust,
+        sp_decrement,
+        instruction_load,
+        reset,
+        clock,
+        address_select,
+        hl,
+        external_address,
+        memory_data,
+    )
+    pc = registers.pc
+    sp = registers.sp
+    instruction = registers.instruction
+    address = registers.address
+}

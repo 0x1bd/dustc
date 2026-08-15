@@ -1,0 +1,81 @@
+module sm83_select8x8(
+    input select: bits<3>,
+    input value0: bits<8>,
+    input value1: bits<8>,
+    input value2: bits<8>,
+    input value3: bits<8>,
+    input value4: bits<8>,
+    input value5: bits<8>,
+    input value6: bits<8>,
+    input value7: bits<8>,
+    output value: bits<8>,
+) {
+    let pair0 = if select[0] { value1 } else { value0 }
+    let pair1 = if select[0] { value3 } else { value2 }
+    let pair2 = if select[0] { value5 } else { value4 }
+    let pair3 = if select[0] { value7 } else { value6 }
+    let half0 = if select[1] { pair1 } else { pair0 }
+    let half1 = if select[1] { pair3 } else { pair2 }
+    value = if select[2] { half1 } else { half0 }
+}
+
+module sm83_ram8x8(
+    input address: bits<3>,
+    input write_data: bits<8>,
+    input write_enable: bit,
+    input clock: bit,
+    output read_data: bits<8>,
+) {
+    let selected = decode<8>(address)
+    let rec value0 = enabled_register<8>(write_data, write_enable & selected[0], clock)
+    let rec value1 = enabled_register<8>(write_data, write_enable & selected[1], clock)
+    let rec value2 = enabled_register<8>(write_data, write_enable & selected[2], clock)
+    let rec value3 = enabled_register<8>(write_data, write_enable & selected[3], clock)
+    let rec value4 = enabled_register<8>(write_data, write_enable & selected[4], clock)
+    let rec value5 = enabled_register<8>(write_data, write_enable & selected[5], clock)
+    let rec value6 = enabled_register<8>(write_data, write_enable & selected[6], clock)
+    let rec value7 = enabled_register<8>(write_data, write_enable & selected[7], clock)
+    let read = sm83_select8x8(address, value0, value1, value2, value3, value4, value5, value6, value7)
+    read_data = read.value
+}
+
+module sm83_ram64x8(
+    input address: bits<6>,
+    input write_data: bits<8>,
+    input write_enable: bit,
+    input clock: bit,
+    output read_data: bits<8>,
+) {
+    let selected = decode<8>(address[3..6])
+    let bank0 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[0], clock)
+    let bank1 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[1], clock)
+    let bank2 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[2], clock)
+    let bank3 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[3], clock)
+    let bank4 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[4], clock)
+    let bank5 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[5], clock)
+    let bank6 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[6], clock)
+    let bank7 = sm83_ram8x8(address[0..3], write_data, write_enable & selected[7], clock)
+    let read = sm83_select8x8(
+        address[3..6],
+        bank0.read_data,
+        bank1.read_data,
+        bank2.read_data,
+        bank3.read_data,
+        bank4.read_data,
+        bank5.read_data,
+        bank6.read_data,
+        bank7.read_data,
+    )
+    read_data = read.value
+}
+
+module sm83_ram_demo(
+    input address: bits<6>,
+    input write_data: bits<8>,
+    input write_enable: bit,
+    input clock: bit,
+    output read_data: bits<8>,
+) {
+    let ram = sm83_ram64x8(address, write_data, write_enable, clock)
+    read_data = ram.read_data
+}
