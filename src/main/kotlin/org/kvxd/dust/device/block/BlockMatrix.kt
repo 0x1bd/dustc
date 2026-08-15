@@ -11,7 +11,11 @@ class BlockMatrix(
         require(width > 0 && height > 0 && length > 0)
     }
 
-    val volume: Int = Math.multiplyExact(Math.multiplyExact(width, height), length)
+    val volume: Int = run {
+        val value = width.toLong() * height * length
+        require(value <= Int.MAX_VALUE) { "$width x $height x $length exceeds the supported block volume" }
+        value.toInt()
+    }
     private val air = BlockType.AIR.defaultState
     private val chunkWidth = ((width - 1) shr CHUNK_BITS) + 1
     private val chunkLength = ((length - 1) shr CHUNK_BITS) + 1

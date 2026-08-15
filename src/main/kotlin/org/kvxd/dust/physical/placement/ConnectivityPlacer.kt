@@ -50,8 +50,9 @@ internal class ConnectivityPlacer(
         require(netEndpointCells.indices.all { net -> netEndpointCells[net].all { it in 0 until cellCount } })
     }
 
-    fun place(rowCount: Int): List<List<List<Int>>> {
+    fun place(rowCount: Int, maximumCandidates: Int = MAX_OUTPUT_CANDIDATES): List<List<List<Int>>> {
         require(rowCount in 1..cellCount)
+        require(maximumCandidates > 0)
         val candidates = LinkedHashMap<String, Candidate>()
         seedOrders().forEach { order ->
             var rows = partition(order, rowCount)
@@ -69,7 +70,7 @@ internal class ConnectivityPlacer(
         }
         return candidates.values
             .sortedWith(compareBy<Candidate>({ it.score }, { signature(it.rows) }))
-            .take(MAX_OUTPUT_CANDIDATES)
+            .take(maximumCandidates)
             .map { it.rows }
     }
 

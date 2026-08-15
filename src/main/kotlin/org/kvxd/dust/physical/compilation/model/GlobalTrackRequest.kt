@@ -8,7 +8,6 @@ internal data class GlobalTrackRequest(
     val driverRow: Int,
     val sinkKeys: Set<GlobalSinkKey>,
     val sinkRows: Set<Int>,
+    val bandSpan: IntRange,
     val preferredX: Int,
-) {
-    val rowSpan: IntRange = minOf(driverRow, sinkRows.min())..maxOf(driverRow, sinkRows.max())
-}
+)
