@@ -1,0 +1,140 @@
+module sm83_read_port(
+    input address: bits<3>,
+    input b: bits<8>,
+    input c: bits<8>,
+    input d: bits<8>,
+    input e: bits<8>,
+    input h: bits<8>,
+    input l: bits<8>,
+    input memory_data: bits<8>,
+    input a: bits<8>,
+    output value: bits<8>,
+) {
+    let bc = if address[0] { c } else { b }
+    let de = if address[0] { e } else { d }
+    let hl = if address[0] { l } else { h }
+    let memory_or_a = if address[0] { a } else { memory_data }
+    let low = if address[1] { de } else { bc }
+    let high = if address[1] { memory_or_a } else { hl }
+    value = if address[2] { high } else { low }
+}
+
+module sm83_register_file(
+    input control {
+        write_enable: bit,
+        write_address: bits<3>,
+        write_data: bits<8>,
+        flags_write_enable: bit,
+        flags_write_data: bits<4>,
+        reset: bit,
+        clock: bit,
+    },
+    input read_bus {
+        left_address: bits<3>,
+        right_address: bits<3>,
+        memory_data: bits<8>,
+    },
+    output operands {
+        left: bits<8>,
+        right: bits<8>,
+    },
+    output state {
+        hl: bits<16>,
+        f: bits<8>,
+    },
+) {
+    let selected = decode<8>(write_address)
+    let rec b = resettable_register<8>(
+        if write_enable & selected[0] { write_data } else { b },
+        reset,
+        clock,
+    )
+    let rec c = resettable_register<8>(
+        if write_enable & selected[1] { write_data } else { c },
+        reset,
+        clock,
+    )
+    let rec d = resettable_register<8>(
+        if write_enable & selected[2] { write_data } else { d },
+        reset,
+        clock,
+    )
+    let rec e = resettable_register<8>(
+        if write_enable & selected[3] { write_data } else { e },
+        reset,
+        clock,
+    )
+    let rec h = resettable_register<8>(
+        if write_enable & selected[4] { write_data } else { h },
+        reset,
+        clock,
+    )
+    let rec l = resettable_register<8>(
+        if write_enable & selected[5] { write_data } else { l },
+        reset,
+        clock,
+    )
+    let rec a = resettable_register<8>(
+        if write_enable & selected[7] { write_data } else { a },
+        reset,
+        clock,
+    )
+    let rec stored_flags = resettable_register<4>(
+        if flags_write_enable { flags_write_data } else { stored_flags },
+        reset,
+        clock,
+    )
+
+    let left_read = sm83_read_port(left_address, b, c, d, e, h, l, memory_data, a)
+    let right_read = sm83_read_port(right_address, b, c, d, e, h, l, memory_data, a)
+    left = left_read.value
+    right = right_read.value
+
+    hl[0..8] = l
+    hl[8..16] = h
+    f[0..4] = const_bits<4>(0)
+    f[4..8] = stored_flags
+}
+
+module main(
+    #[panel]
+    input control {
+        write_enable: bit,
+        write_address: bits<3>,
+        write_data: bits<8>,
+        flags_write_enable: bit,
+        flags_write_data: bits<4>,
+        reset: bit,
+        clock: bit,
+    },
+    #[panel]
+    input read_bus {
+        left_address: bits<3>,
+        right_address: bits<3>,
+        memory_data: bits<8>,
+    },
+    #[panel]
+    output result {
+        left: bits<8>,
+        right: bits<8>,
+        hl: bits<16>,
+        f: bits<8>,
+    },
+) {
+    let registers = sm83_register_file(
+        write_enable,
+        write_address,
+        write_data,
+        flags_write_enable,
+        flags_write_data,
+        reset,
+        clock,
+        left_address,
+        right_address,
+        memory_data,
+    )
+    left = registers.left
+    right = registers.right
+    hl = registers.hl
+    f = registers.f
+}
