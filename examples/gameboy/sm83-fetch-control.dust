@@ -19,6 +19,14 @@ module sm83_instruction_decode(
     output jump_absolute: bit,
     output jump_absolute_conditional: bit,
     output jump_hl: bit,
+    output push: bit,
+    output pop: bit,
+    output call: bit,
+    output call_conditional: bit,
+    output ret: bit,
+    output ret_conditional: bit,
+    output reti: bit,
+    output rst: bit,
     output block_three: bit,
     output halt: bit,
 ) {
@@ -41,6 +49,18 @@ module sm83_instruction_decode(
     let absolute_conditional = three & (~instruction[5]) & (~instruction[2]) & instruction[1] & (~instruction[0])
     let hl_jump = instruction[7] & instruction[6] & instruction[5] & (~instruction[4]) & instruction[3] &
         (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let stack_push = three & (~instruction[3]) & instruction[2] & (~instruction[1]) & instruction[0]
+    let stack_pop = three & (~instruction[3]) & (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let subroutine_call = three & (~instruction[5]) & (~instruction[4]) & instruction[3] & instruction[2] &
+        (~instruction[1]) & instruction[0]
+    let conditional_call = three & (~instruction[5]) & instruction[2] & (~instruction[1]) & (~instruction[0])
+    let subroutine_return = three & (~instruction[5]) & (~instruction[4]) & instruction[3] &
+        (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let conditional_return = three & (~instruction[5]) & (~instruction[2]) & (~instruction[1]) &
+        (~instruction[0])
+    let interrupt_return = three & (~instruction[5]) & instruction[4] & instruction[3] &
+        (~instruction[2]) & (~instruction[1]) & instruction[0]
+    let restart = three & instruction[2] & instruction[1] & instruction[0]
     let source_is_six = instruction[2] & instruction[1] & (~instruction[0])
     let destination_is_six = instruction[5] & instruction[4] & (~instruction[3])
     let is_halt = load & source_is_six & destination_is_six
@@ -64,6 +84,14 @@ module sm83_instruction_decode(
     jump_absolute = absolute_jump
     jump_absolute_conditional = absolute_conditional
     jump_hl = hl_jump
+    push = stack_push
+    pop = stack_pop
+    call = subroutine_call
+    call_conditional = conditional_call
+    ret = subroutine_return
+    ret_conditional = conditional_return
+    reti = interrupt_return
+    rst = restart
     block_three = three
     halt = is_halt
 }
@@ -158,6 +186,14 @@ module sm83_fetch_control_demo(
         jump_absolute: bit,
         jump_absolute_conditional: bit,
         jump_hl: bit,
+        push: bit,
+        pop: bit,
+        call: bit,
+        call_conditional: bit,
+        ret: bit,
+        ret_conditional: bit,
+        reti: bit,
+        rst: bit,
         block_three: bit,
         halt: bit,
     },
@@ -198,6 +234,14 @@ module sm83_fetch_control_demo(
     jump_absolute = decoded.jump_absolute
     jump_absolute_conditional = decoded.jump_absolute_conditional
     jump_hl = decoded.jump_hl
+    push = decoded.push
+    pop = decoded.pop
+    call = decoded.call
+    call_conditional = decoded.call_conditional
+    ret = decoded.ret
+    ret_conditional = decoded.ret_conditional
+    reti = decoded.reti
+    rst = decoded.rst
     block_three = decoded.block_three
     halt = decoded.halt
 }
