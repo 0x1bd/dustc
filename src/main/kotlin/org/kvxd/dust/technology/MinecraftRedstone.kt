@@ -21,6 +21,7 @@ object MinecraftRedstone {
         BuiltinCells.mux2,
         BuiltinCells.latch,
         BuiltinCells.dff,
+        BuiltinCells.enabledDff,
         BuiltinCells.constantLow,
         BuiltinCells.constantHigh,
         BuiltinCells.inputPad,
@@ -75,6 +76,7 @@ object MinecraftRedstone {
             BuiltinCells.mux2,
             BuiltinCells.latch,
             BuiltinCells.dff,
+            BuiltinCells.enabledDff,
             BuiltinCells.constantLow,
             BuiltinCells.constantHigh,
         ).map { logical ->

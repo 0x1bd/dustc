@@ -1,0 +1,47 @@
+cell enabled-dff
+
+pins:
+clock input @0,1,5 abut=false required=15
+enable input @4,1,5 required=1
+d input @6,1,5 required=1
+q output @8,1,5 drive=15
+
+observations:
+edge-pulse @0,1,2
+hold @2,1,1
+enable-gate @2,1,3
+lock @7,1,4
+stored @7,1,5
+
+layout:
+wire dust @0,1,5
+wire dust @1,1,5
+wire dust @0,1,4
+wire repeater-north-2 @1,1,4
+wire comparator-north-subtract @0,1,3
+wire dust @1,1,3
+wire repeater-west @2,1,3
+wire torch-west @3,1,3
+wire support @4,1,3
+wire repeater-north @4,1,4
+wire dust @4,1,5
+wire dust @0,1,2
+
+include not @0,0,0
+wire dust @3,1,1
+wire dust @4,1,1
+wire dust @5,1,1
+wire dust @6,1,1
+wire dust @7,1,1
+wire dust @7,1,2
+wire dust @7,1,3
+wire repeater-south @7,1,4
+
+wire dust @6,1,5
+wire repeater-east @7,1,5
+wire dust @8,1,5
+
+timing:
+arc clock -> q rise=4 fall=4
+setup-hold d clock edge=rise setup=1 hold=2
+setup-hold enable clock edge=rise setup=2 hold=1

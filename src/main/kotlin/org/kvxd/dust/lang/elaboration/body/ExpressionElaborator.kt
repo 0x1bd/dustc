@@ -2,6 +2,7 @@ package org.kvxd.dust.lang.elaboration.body
 
 import org.kvxd.dust.cell.definition.PortDirection as CellPortDirection
 import org.kvxd.dust.cell.library.CellLibrary
+import org.kvxd.dust.lang.MAX_BUS_WIDTH
 import org.kvxd.dust.lang.elaboration.diagnostic.ElaborationDiagnostics
 import org.kvxd.dust.lang.elaboration.display.DisplayElaboration
 import org.kvxd.dust.lang.elaboration.expression.IntegerArithmetic
@@ -178,6 +179,7 @@ internal class ExpressionElaborator(
             "register", "enabled_register", "resettable_register" ->
                 return register(call, environment, outputs, builder, callStack)
 
+            "ram" -> return ram(call, environment, outputs, builder, callStack)
             "mux" -> return mux(call, environment, outputs, builder, callStack)
         }
 
@@ -221,6 +223,45 @@ internal class ExpressionElaborator(
                 }.reduce(builder::and)
             },
         )
+    }
+
+    private fun ram(
+        call: CallSyntax,
+        environment: ElaborationEnvironment,
+        outputs: Map<String, OutputBinding>,
+        builder: BooleanNetlistBuilder,
+        callStack: List<SpecializationKey>,
+    ): ElaboratedValue.Signals {
+        if (call.parameters.size != 2 || call.arguments.size != 4) {
+            fail(
+                call.location,
+                "ram<ADDRESS_BITS, DATA_BITS>(address, write_data, write_enable, clock) " +
+                    "expects two widths and four arguments",
+            )
+        }
+        val addressBits = integer(call.parameters[0], environment, outputs, builder, callStack)
+        val dataBits = integer(call.parameters[1], environment, outputs, builder, callStack)
+        if (addressBits !in 1..16) {
+            fail(call.parameters[0].location, "RAM address width must be between 1 and 16")
+        }
+        if (dataBits !in 1..MAX_BUS_WIDTH) {
+            fail(call.parameters[1].location, "RAM data width must be between 1 and $MAX_BUS_WIDTH")
+        }
+        val arguments = call.arguments.map { evaluate(it, environment, outputs, builder, callStack) }
+        val address = signals(arguments[0], call.arguments[0].location)
+        val writeData = signals(arguments[1], call.arguments[1].location)
+        val writeEnable = signals(arguments[2], call.arguments[2].location)
+        val clock = signals(arguments[3], call.arguments[3].location)
+        if (address.size != addressBits) {
+            fail(call.arguments[0].location, "ram<$addressBits, $dataBits> needs a $addressBits-bit address")
+        }
+        if (writeData.size != dataBits) {
+            fail(call.arguments[1].location, "ram<$addressBits, $dataBits> needs $dataBits-bit write data")
+        }
+        if (writeEnable.size != 1 || clock.size != 1) {
+            fail(call.location, "RAM write enable and clock inputs must be bits")
+        }
+        return ElaboratedValue.Signals(builder.ram(address, writeData, writeEnable.single(), clock.single()))
     }
 
     private fun displayWrite(

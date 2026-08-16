@@ -162,6 +162,6 @@ internal class ModuleSpecializer(
     }
 
     private companion object {
-        val STORAGE_INTRINSICS = setOf("register", "enabled_register", "resettable_register")
+        val STORAGE_INTRINSICS = setOf("register", "enabled_register", "resettable_register", "ram")
     }
 }

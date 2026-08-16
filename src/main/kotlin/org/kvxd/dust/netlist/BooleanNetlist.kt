@@ -66,7 +66,7 @@ class BooleanNetlist internal constructor(
                     val select = state[gate.inputs[0].index]
                     (state[gate.inputs[1].index] and select.inv()) or (state[gate.inputs[2].index] and select)
                 }
-                Primitive.LATCH, Primitive.DFF -> error("storage requires SequentialSimulator")
+                Primitive.LATCH, Primitive.DFF, Primitive.ENABLED_DFF -> error("storage requires SequentialSimulator")
             }
         }
         return outputs.mapValues { (_, signal) -> state[signal.index] }

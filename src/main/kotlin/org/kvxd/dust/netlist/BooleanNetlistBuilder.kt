@@ -59,8 +59,7 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
     }
 
     fun enabledDffInto(data: Signal, enable: Signal, clock: Signal, output: Signal) {
-        val selected = mux(enable, output, data)
-        dffInto(selected, clock, output)
+        gateInto(Primitive.ENABLED_DFF, listOf(data, enable, clock), output)
     }
 
     fun resettableDff(data: Signal, reset: Signal, clock: Signal): Signal {
@@ -72,6 +71,33 @@ class BooleanNetlistBuilder internal constructor(private val name: String) {
     fun resettableDffInto(data: Signal, reset: Signal, clock: Signal, output: Signal) {
         val selected = mux(reset, data, constant(false))
         dffInto(selected, clock, output)
+    }
+
+    fun ram(
+        address: List<Signal>,
+        writeData: List<Signal>,
+        writeEnable: Signal,
+        clock: Signal,
+    ): List<Signal> {
+        require(address.size in 1..16)
+        require(writeData.isNotEmpty())
+        require((address + writeData + writeEnable + clock).all { it.index in 0 until nextSignal })
+        val inverted = address.map(::not)
+        val words = 1 shl address.size
+        val selected = List(words) { word ->
+            address.indices.map { bit ->
+                if (word and (1 shl bit) == 0) inverted[bit] else address[bit]
+            }.reduce(::and)
+        }
+        val stored = selected.map { select ->
+            val enabled = and(writeEnable, select)
+            writeData.map { data -> enabledDff(data, enabled, clock) }
+        }
+        return writeData.indices.map { dataBit ->
+            address.indices.fold(stored.map { it[dataBit] }) { values, bit ->
+                values.chunked(2).map { pair -> mux(address[bit], pair[0], pair[1]) }
+            }.single()
+        }
     }
 
     fun mux(select: Signal, whenFalse: Signal, whenTrue: Signal): Signal =

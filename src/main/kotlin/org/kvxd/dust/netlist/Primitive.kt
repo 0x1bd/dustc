@@ -12,4 +12,5 @@ enum class Primitive(val cellType: CellType) {
 
     LATCH(BuiltinCells.latch),
     DFF(BuiltinCells.dff),
+    ENABLED_DFF(BuiltinCells.enabledDff),
 }

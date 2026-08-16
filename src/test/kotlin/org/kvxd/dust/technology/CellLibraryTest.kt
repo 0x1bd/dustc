@@ -34,7 +34,7 @@ class CellLibraryTest {
                     Primitive.OR2 -> or(inputs[0], inputs[1])
                     Primitive.XOR2 -> xor(inputs[0], inputs[1])
                     Primitive.MUX2 -> mux(inputs[0], inputs[1], inputs[2])
-                    Primitive.LATCH, Primitive.DFF -> error("sequential")
+                    Primitive.LATCH, Primitive.DFF, Primitive.ENABLED_DFF -> error("sequential")
                 }
                 output("y", out)
             }
@@ -94,7 +94,7 @@ class CellLibraryTest {
         assertEquals(CellSize(3, 2, 2), cell(Primitive.NOT).size)
         assertEquals(CellSize(5, 2, 3), cell(Primitive.AND2).size)
         assertEquals(CellSize(13, 2, 7), cell(Primitive.XOR2).size)
-        assertEquals(CellSize(26, 8, 7), cell(Primitive.MUX2).size)
+        assertEquals(CellSize(9, 2, 6), cell(Primitive.MUX2).size)
     }
 
     @Test

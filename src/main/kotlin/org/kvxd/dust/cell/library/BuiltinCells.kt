@@ -66,6 +66,21 @@ object BuiltinCells {
             constraints = listOf(TimingConstraint.SetupHold("d", "clock", Edge.RISE, 1, 2)),
         ),
     )
+    val enabledDff: CellType = CellType(
+        CellTypeId("enabled-dff"),
+        listOf(input("d"), input("enable"), input("clock"), output("q")),
+        CellBehavior.Stateful(1, CellBehavior.Trigger.EdgeTriggered("clock", Edge.RISE)) { inputs, previous ->
+            val q = if (inputs.getValue("enable").single()) inputs.getValue("d").single() else previous.single()
+            CellEvaluation(mapOf("q" to booleanArrayOf(q)), booleanArrayOf(q))
+        },
+        CellTiming(
+            arcs = listOf(arc("clock", "q", 4)),
+            constraints = listOf(
+                TimingConstraint.SetupHold("d", "clock", Edge.RISE, 1, 2),
+                TimingConstraint.SetupHold("enable", "clock", Edge.RISE, 2, 1),
+            ),
+        ),
+    )
     val constantLow: CellType = constant("constant-low", false)
     val constantHigh: CellType = constant("constant-high", true)
     val inputPad: CellType = source("input-pad")
