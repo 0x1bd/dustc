@@ -73,7 +73,8 @@ internal class PhysicalPlacementPlanner(
             )
         )
         candidates.forEachIndexed { candidateIndex, rows ->
-            placer.place(rows).forEach { placement ->
+            val placements = placer.place(rows, PLACEMENT_CANDIDATES)
+            placements.forEach { placement ->
                 val gatePartitions = splitForcedTierRows(placement, specs)
                     .map { row -> row.map { index -> specs[index] } }
                 val partitions = applyPlacementRequirements(
@@ -243,8 +244,8 @@ internal class PhysicalPlacementPlanner(
     private fun tierCounts(rows: List<List<CellSpec>>): List<Int> {
         val required = rows.flatten().mapNotNull { it.forcedTier }.maxOrNull()?.plus(1) ?: 1
         if (required > 1) return listOf(required)
-        if (rows.flatten().any { it.forcedEdge != null }) return listOf(1)
-        return if (rows.size >= 2) listOf(1, 2) else listOf(1)
+        if (rows.flatten().any { it.forcedEdge != null || it.panel }) return listOf(1)
+        return listOf(1)
     }
 
     private fun tierAssignments(
@@ -427,10 +428,7 @@ internal class PhysicalPlacementPlanner(
         val totalWidth = specs.sumOf { it.cell.size.x + technology.cellGap }.toDouble()
         val target = sqrt(totalWidth / SHAPE_ROW_PITCH).coerceAtLeast(1.0)
         return buildSet {
-            add(1)
-            listOf(0.5, 0.75, 1.0, 1.4, 2.0).forEach { ratio ->
-                add(ceil(target * ratio).toInt().coerceIn(1, cellCount))
-            }
+            add(ceil(target * 2.0).toInt().coerceIn(1, cellCount))
             if (cellCount <= SMALL_EXHAUSTIVE_ROWS) addAll(1..cellCount)
         }.sorted()
     }

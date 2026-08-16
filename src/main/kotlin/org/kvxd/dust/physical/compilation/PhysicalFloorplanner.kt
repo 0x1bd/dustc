@@ -76,15 +76,22 @@ internal class PhysicalFloorplanner(
             (maximumViaRise + MAXIMUM_VIA_DUST_RISE - 1) / MAXIMUM_VIA_DUST_RISE - 1
         val routeLanePitch = technology.lanePitch +
             viaRepeaterLandings.coerceAtLeast(0) * VIA_REPEATER_LANDING_WIDTH
+        val foldRows = tierCount > 1 && partitions.flatten().none { it.forcedEdge != null }
+        val bands = IntArray(partitions.size)
+        if (foldRows) {
+            val nextBand = IntArray(tierCount)
+            partitions.indices.forEach { row -> bands[row] = nextBand[tierAssignment[row]]++ }
+        } else {
+            partitions.indices.forEach { row -> bands[row] = row }
+        }
         val globalTracks = assignGlobalTracks(
-            planGlobalTracks(globalSignals, localConnections, netlist.clockSignals),
+            planGlobalTracks(globalSignals, localConnections, netlist.clockSignals, bands),
             cellWidth,
             blockedGlobalViaColumns,
             activeGlobalPlaneY,
             tierCount,
         )
         val tracksBySignal = globalTracks.groupBy { it.signal }
-        val foldRows = tierCount > 1 && partitions.flatten().none { it.forcedEdge != null }
 
         val rowDrafts = partitions.indices.map { row ->
             val cells = localCells.filter { it.row == row }
@@ -135,13 +142,6 @@ internal class PhysicalFloorplanner(
             )
         }
 
-        val bands = IntArray(partitions.size)
-        if (foldRows) {
-            val nextBand = IntArray(tierCount)
-            partitions.indices.forEach { row -> bands[row] = nextBand[tierAssignment[row]]++ }
-        } else {
-            partitions.indices.forEach { row -> bands[row] = row }
-        }
         val bandCount = bands.maxOrNull()?.plus(1) ?: 0
         val bandCellDepths = IntArray(bandCount)
         rowDrafts.forEach { draft ->
@@ -149,7 +149,7 @@ internal class PhysicalFloorplanner(
             bandCellDepths[band] = maxOf(bandCellDepths[band], draft.cellDepth)
         }
         val tierLaneOffsets = IntArray(partitions.size)
-        if (foldRows) {
+        if (tierCount > 1) {
             for (band in 0 until bandCount) {
                 var offset = 0
                 rowDrafts.filter { bands[it.index] == band }
@@ -161,19 +161,25 @@ internal class PhysicalFloorplanner(
                     }
             }
         }
-        val prepared = if (viaPolicy == ViaPolicy.STAIRS) {
-            rowDrafts.map { draft ->
-                val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
+        val laneYs = IntArray(partitions.size) { row ->
+            technology.lowerPlaneY + tierAssignment[row] * tierPitch
+        }
+        val globalViaReaches = IntArray(partitions.size) { row ->
+            router.viaOffsets(
+                ViaSense.DOWN,
+                laneYs[row],
+                activeGlobalPlaneY,
+                ViaFlow.DOWNWARD,
+                true,
+                viaPolicy,
+            ).maxOf { abs(it.z) }
+        }
+        val laneReaches = IntArray(partitions.size) { row ->
+            val draft = rowDrafts[row]
+            val laneY = laneYs[row]
+            if (viaPolicy == ViaPolicy.STAIRS) {
                 val baseViaReach = technology.viaSignalOffsets.maxOf { abs(it.z) }
-                val globalViaReach = router.viaOffsets(
-                    ViaSense.DOWN,
-                    laneY,
-                    activeGlobalPlaneY,
-                    ViaFlow.DOWNWARD,
-                    true,
-                    viaPolicy,
-                ).maxOf { abs(it.z) }
-                val endpointViaReach = draft.routes
+                draft.routes
                     .flatMap { route -> listOf(route.source) + route.sinks }
                     .maxOfOrNull { endpoint ->
                         when (endpoint) {
@@ -190,12 +196,31 @@ internal class PhysicalFloorplanner(
                                 baseViaReach
                             }
 
-                            is Endpoint.Global -> globalViaReach
+                            is Endpoint.Global -> globalViaReaches[row]
                         }
                     } ?: baseViaReach
-                val laneReach = if (foldRows) globalViaReach else endpointViaReach
+            } else {
+                draft.routes.maxOfOrNull { route ->
+                    maxOf(
+                        router.viaReach(route.source, laneY, ViaFlow.DOWNWARD, viaPolicy),
+                        route.sinks.maxOfOrNull { router.viaReach(it, laneY, ViaFlow.UPWARD, viaPolicy) } ?: 0,
+                    )
+                } ?: 0
+            }
+        }
+        if (foldRows) {
+            for (band in 0 until bandCount) {
+                val reach = rowDrafts.filter { bands[it.index] == band }.maxOf { laneReaches[it.index] }
+                rowDrafts.filter { bands[it.index] == band }.forEach { laneReaches[it.index] = reach }
+            }
+        }
+        val prepared = if (viaPolicy == ViaPolicy.STAIRS) {
+            rowDrafts.map { draft ->
+                val laneY = laneYs[draft.index]
+                val globalViaReach = globalViaReaches[draft.index]
                 val laneBase =
-                    bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
+                    bandCellDepths[bands[draft.index]] + technology.isolation + laneReaches[draft.index] +
+                        tierLaneOffsets[draft.index]
                 val routes = draft.routes.map { route ->
                     route.placeAt(0, laneY, laneBase + route.lane * routeLanePitch, viaPolicy)
                 }
@@ -225,15 +250,10 @@ internal class PhysicalFloorplanner(
             }
         } else {
             rowDrafts.map { draft ->
-                val laneY = technology.lowerPlaneY + tierAssignment[draft.index] * tierPitch
-                val laneReach = draft.routes.maxOfOrNull { route ->
-                    maxOf(
-                        router.viaReach(route.source, laneY, ViaFlow.DOWNWARD, viaPolicy),
-                        route.sinks.maxOfOrNull { router.viaReach(it, laneY, ViaFlow.UPWARD, viaPolicy) } ?: 0,
-                    )
-                } ?: 0
+                val laneY = laneYs[draft.index]
                 val laneBase =
-                    bandCellDepths[bands[draft.index]] + technology.isolation + laneReach + tierLaneOffsets[draft.index]
+                    bandCellDepths[bands[draft.index]] + technology.isolation + laneReaches[draft.index] +
+                        tierLaneOffsets[draft.index]
                 val routes = draft.routes.map { route ->
                     route.placeAt(0, laneY, laneBase + route.lane * routeLanePitch, viaPolicy)
                 }
@@ -348,11 +368,11 @@ internal class PhysicalFloorplanner(
         )
     }
 
-
     private fun planGlobalTracks(
         globalSignals: List<Signal>,
         connections: Map<Signal, List<ConnectedPin>>,
         clockSignals: Set<Signal>,
+        bands: IntArray,
     ): List<GlobalTrackRequest> = globalSignals.flatMap { signal ->
         val pins = checkNotNull(connections[signal])
         val driver = pins.single { it.pin.direction == PinDirection.OUTPUT }
@@ -364,12 +384,14 @@ internal class PhysicalFloorplanner(
         }
         partitions.mapIndexed { ordinal, group ->
             val xs = (group.map { it.x } + driver.position.x).sorted()
+            val touchedBands = group.map { bands[it.row] } + bands[driver.cell.row]
             GlobalTrackRequest(
                 signal,
                 ordinal,
                 driver.cell.row,
                 group.mapTo(linkedSetOf()) { it.key },
                 group.mapTo(linkedSetOf()) { it.row },
+                touchedBands.min()..touchedBands.max(),
                 xs[xs.size / 2],
             )
         }
@@ -382,14 +404,17 @@ internal class PhysicalFloorplanner(
     ): List<List<GlobalSinkPoint>> {
         if (sinks.size <= 1) return listOf(sinks)
         val maximumTracks = minOf(STEINER_MAX_TRACKS, sinks.size)
-        var best = listOf(sinks)
-        var bestCost = globalPartitionCost(driverRow, driverX, best)
+        val costs = GlobalPartitionCosts(driverRow, driverX, sinks)
+        var bestTracks = 1
+        var bestFirst = sinks.size
+        var bestSecond = sinks.size
+        var bestCost = costs.cost(0, sinks.size)
         if (maximumTracks >= 2) {
             for (first in 1 until sinks.size) {
-                val candidate = listOf(sinks.subList(0, first), sinks.subList(first, sinks.size))
-                val cost = globalPartitionCost(driverRow, driverX, candidate)
+                val cost = costs.cost(0, first) + costs.cost(first, sinks.size)
                 if (cost < bestCost) {
-                    best = candidate
+                    bestTracks = 2
+                    bestFirst = first
                     bestCost = cost
                 }
             }
@@ -397,33 +422,25 @@ internal class PhysicalFloorplanner(
         if (maximumTracks >= 3) {
             for (first in 1 until sinks.size - 1) {
                 for (second in first + 1 until sinks.size) {
-                    val candidate = listOf(
-                        sinks.subList(0, first),
-                        sinks.subList(first, second),
-                        sinks.subList(second, sinks.size),
-                    )
-                    val cost = globalPartitionCost(driverRow, driverX, candidate)
+                    val cost = costs.cost(0, first) + costs.cost(first, second) + costs.cost(second, sinks.size)
                     if (cost < bestCost) {
-                        best = candidate
+                        bestTracks = 3
+                        bestFirst = first
+                        bestSecond = second
                         bestCost = cost
                     }
                 }
             }
         }
-        return best
-    }
-
-    private fun globalPartitionCost(
-        driverRow: Int,
-        driverX: Int,
-        groups: List<List<GlobalSinkPoint>>,
-    ): Long = groups.sumOf { group ->
-        val sortedXs = (group.map { it.x } + driverX).sorted()
-        val x = sortedXs[sortedXs.size / 2]
-        val horizontal = group.sumOf { sink -> abs(sink.x - x).toLong() } + abs(driverX - x)
-        val firstRow = minOf(driverRow, group.minOf { it.row })
-        val lastRow = maxOf(driverRow, group.maxOf { it.row })
-        horizontal + (lastRow - firstRow).toLong() * STEINER_ROW_COST + STEINER_TRACK_COST
+        return when (bestTracks) {
+            1 -> listOf(sinks)
+            2 -> listOf(sinks.subList(0, bestFirst), sinks.subList(bestFirst, sinks.size))
+            else -> listOf(
+                sinks.subList(0, bestFirst),
+                sinks.subList(bestFirst, bestSecond),
+                sinks.subList(bestSecond, sinks.size),
+            )
+        }
     }
 
     private fun assignGlobalTracks(
@@ -433,9 +450,8 @@ internal class PhysicalFloorplanner(
         planeY: Int,
         tierCount: Int,
     ): List<GlobalTrack> {
-        val folded = tierCount > 1
         val tracks = mutableListOf<GlobalTrack>()
-        val occupied = GlobalTrackOccupancy(folded, technology.isolation, GLOBAL_ROW_GUARD)
+        val occupied = GlobalTrackOccupancy(technology.isolation, GLOBAL_ROW_GUARD)
         val blockedViaColumnsWithIsolation = BitSet()
         blockedViaColumns.forEach { column ->
             blockedViaColumnsWithIsolation.set(
@@ -444,60 +460,72 @@ internal class PhysicalFloorplanner(
             )
         }
         requests.sortedWith(
-            compareByDescending<GlobalTrackRequest> { (it.rowSpan.last - it.rowSpan.first + 1) * it.sinkRows.size }
-                .thenByDescending { it.rowSpan.last - it.rowSpan.first }
+            compareByDescending<GlobalTrackRequest> { (it.bandSpan.last - it.bandSpan.first + 1) * it.sinkRows.size }
+                .thenByDescending { it.bandSpan.last - it.bandSpan.first }
                 .thenBy { it.signal.index }
                 .thenBy { it.ordinal },
         ).forEach { request ->
-            val candidateOrder = compareBy<GlobalTrack>(
-                { abs(it.viaX - request.preferredX) },
-                { abs(it.trunkX - it.viaX) },
-                { maxOf(it.trunkX, it.viaX) >= cellWidth },
-                { maxOf(it.trunkX, it.viaX) },
-                { it.trunkX },
-            )
             var radius = 0
-            var chosen: GlobalTrack? = null
-            while (chosen == null) {
+            var chosenViaX = -1
+            var chosenTrunkX = -1
+
+            fun preferred(viaX: Int, trunkX: Int): Boolean {
+                if (chosenViaX < 0) return true
+                val distance = abs(viaX - request.preferredX).compareTo(abs(chosenViaX - request.preferredX))
+                if (distance != 0) return distance < 0
+                val tap = abs(trunkX - viaX).compareTo(abs(chosenTrunkX - chosenViaX))
+                if (tap != 0) return tap < 0
+                val maximumX = maxOf(trunkX, viaX)
+                val chosenMaximumX = maxOf(chosenTrunkX, chosenViaX)
+                val outside = (maximumX >= cellWidth).compareTo(chosenMaximumX >= cellWidth)
+                if (outside != 0) return outside < 0
+                val maximum = maximumX.compareTo(chosenMaximumX)
+                if (maximum != 0) return maximum < 0
+                return trunkX < chosenTrunkX
+            }
+
+            fun considerTrunk(viaX: Int, trunkX: Int) {
+                if (trunkX < 0) return
+                val footprint = minOf(trunkX, viaX)..maxOf(
+                    trunkX,
+                    viaX + (tierCount - 1) * GLOBAL_TIER_VIA_PITCH,
+                )
+                if (occupied.conflicts(request.bandSpan, footprint)) return
+                if (preferred(viaX, trunkX)) {
+                    chosenViaX = viaX
+                    chosenTrunkX = trunkX
+                }
+            }
+
+            fun considerVia(viaX: Int) {
+                if (viaX < 0) return
+                for (tier in 0 until tierCount) {
+                    if (blockedViaColumnsWithIsolation[viaX + tier * GLOBAL_TIER_VIA_PITCH]) return
+                }
+                considerTrunk(viaX, viaX - GLOBAL_TAP_OFFSET)
+                considerTrunk(viaX, viaX + GLOBAL_TAP_OFFSET)
+            }
+
+            while (chosenViaX < 0) {
                 val firstViaX = request.preferredX - radius
                 val lastViaX = request.preferredX + radius
-                val viaCandidates = if (firstViaX == lastViaX) intArrayOf(firstViaX) else intArrayOf(firstViaX, lastViaX)
-                for (viaX in viaCandidates) {
-                    if (viaX < 0) continue
-                    if ((0 until tierCount).any { tier ->
-                            blockedViaColumnsWithIsolation[viaX + tier * GLOBAL_TIER_VIA_PITCH]
-                        }
-                    ) {
-                        continue
-                    }
-                    val trunkCandidates = when {
-                        folded -> intArrayOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
-                        request.sinkRows.size == 1 ->
-                            intArrayOf(viaX, viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
-                        else -> intArrayOf(viaX - GLOBAL_TAP_OFFSET, viaX + GLOBAL_TAP_OFFSET)
-                    }
-                    for (trunkX in trunkCandidates) {
-                        if (trunkX < 0) continue
-                        val candidate = GlobalTrack(
-                            request.signal,
-                            request.ordinal,
-                            request.driverRow,
-                            request.sinkKeys,
-                            request.sinkRows,
-                            trunkX,
-                            viaX,
-                            planeY,
-                            tierCount,
-                        )
-                        if (occupied.conflicts(candidate.rowSpan, candidate.footprint)) continue
-                        val current = chosen
-                        if (current == null || candidateOrder.compare(candidate, current) < 0) chosen = candidate
-                    }
-                }
+                considerVia(firstViaX)
+                if (lastViaX != firstViaX) considerVia(lastViaX)
                 radius++
             }
+            val chosen = GlobalTrack(
+                request.signal,
+                request.ordinal,
+                request.driverRow,
+                request.sinkKeys,
+                request.sinkRows,
+                chosenTrunkX,
+                chosenViaX,
+                planeY,
+                tierCount,
+            )
             tracks += chosen
-            occupied.add(chosen.rowSpan, chosen.footprint)
+            occupied.add(request.bandSpan, chosen.footprint)
         }
         return tracks
     }
